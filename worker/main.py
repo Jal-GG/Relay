@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import argparse
+import logging
+import signal
+import sys
+import time
+from urllib.parse import urljoin
+
+import httpx
+
+from common.models import HeartbeatRequest, RegisterRequest
+from common.protocol import HEARTBEAT_INTERVAL_S, ROUTES
+from worker.hardware import collect_hardware, local_hostname, local_ip
+
+log = logging.getLogger("relay.worker")
+
+
+def build_register_request(worker_id: str | None) -> RegisterRequest:
+    hw = collect_hardware()
+    return RegisterRequest(
+        worker_id=worker_id or local_hostname(),
+        hostname=local_hostname(),
+        ip=local_ip(),
+        hardware=hw,
+    )
+
+
+def make_heartbeat(worker_id: str) -> HeartbeatRequest:
+    hw = collect_hardware()
+    return HeartbeatRequest(worker_id=worker_id, hardware=hw)
+
+
+def url(base: str, route: str) -> str:
+    return urljoin(base if base.endswith("/") else base + "/", route.lstrip("/"))
+
+
+def run(coordinator_url: str, worker_id: str | None) -> int:
+    reg = build_register_request(worker_id)
+    log.info("registering %s (%s) with %s", reg.worker_id, reg.ip, coordinator_url)
+
+    with httpx.Client(timeout=10.0) as client:
+        try:
+            resp = client.post(url(coordinator_url, ROUTES["register"]), json=reg.model_dump())
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.error("registration failed: %s", exc)
+            return 1
+        log.info("registered as %s", reg.worker_id)
+
+        stopping = {"flag": False}
+
+        def handle_signal(signum, frame):
+            log.info("received signal %s, stopping", signum)
+            stopping["flag"] = True
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(sig, handle_signal)
+            except (ValueError, OSError):
+                # SIGTERM cannot always be installed on Windows — skip quietly.
+                pass
+
+        while not stopping["flag"]:
+            try:
+                hb = make_heartbeat(reg.worker_id)
+                resp = client.post(url(coordinator_url, ROUTES["heartbeat"]), json=hb.model_dump())
+                resp.raise_for_status()
+                log.debug("heartbeat ok: cpu=%.1f%% ram_free=%dMB",
+                          hb.hardware.cpu_percent, hb.hardware.ram_free_mb)
+            except httpx.HTTPError as exc:
+                log.warning("heartbeat failed: %s", exc)
+            except Exception as exc:
+                log.exception("unexpected heartbeat error: %s", exc)
+
+            for _ in range(int(HEARTBEAT_INTERVAL_S)):
+                if stopping["flag"]:
+                    break
+                time.sleep(1)
+
+    log.info("worker %s shut down cleanly", reg.worker_id)
+    return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Relay worker process")
+    p.add_argument("coordinator", help="Coordinator base URL, e.g. http://192.168.1.10:8000")
+    p.add_argument("--worker-id", default=None, help="Override worker id (defaults to hostname)")
+    p.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+    )
+    return run(args.coordinator, args.worker_id)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Relay — Cluster Dashboard</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --online: #3fb950;
+      --offline: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, "Segoe UI Mono", Consolas, monospace;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    h1 { font-size: 20px; margin: 0; letter-spacing: 0.5px; }
+    h1 .accent { color: var(--accent); }
+    .meta { color: var(--muted); font-size: 12px; }
+    .meta .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--online);
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    th {
+      background: #1f262d;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+    tr:last-child td { border-bottom: none; }
+    .status {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .status.online { color: var(--online); background: rgba(63, 185, 80, 0.12); }
+    .status.offline { color: var(--offline); background: rgba(248, 81, 73, 0.12); }
+    .muted { color: var(--muted); }
+    .empty { text-align: center; color: var(--muted); padding: 32px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Relay <span class="accent">Cluster</span></h1>
+    <div class="meta"><span class="dot"></span><span id="updated">waiting…</span></div>
+  </header>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Hostname</th>
+        <th>Status</th>
+        <th>IP</th>
+        <th>OS</th>
+        <th>CPU cores</th>
+        <th>CPU %</th>
+        <th>RAM free</th>
+        <th>GPU</th>
+        <th>VRAM free</th>
+        <th>Last seen</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr><td colspan="10" class="empty">No workers registered.</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    const REFRESH_MS = 3000;
+
+    function fmtBytes(mb) {
+      if (mb == null) return "—";
+      if (mb >= 1024) return (mb / 1024).toFixed(1) + " GB";
+      return Math.round(mb) + " MB";
+    }
+
+    function fmtAgo(iso) {
+      const then = new Date(iso).getTime();
+      const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+      if (sec < 1) return "just now";
+      if (sec < 60) return sec + "s ago";
+      return Math.floor(sec / 60) + "m ago";
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch("/workers");
+        const workers = await res.json();
+        const rows = document.getElementById("rows");
+        if (!workers.length) {
+          rows.innerHTML = '<tr><td colspan="10" class="empty">No workers registered.</td></tr>';
+          return;
+        }
+        rows.innerHTML = workers.map(w => {
+          const gpu = w.hardware.gpu;
+          const gpuName = gpu ? escapeHtml(gpu.name) : '<span class="muted">none</span>';
+          const vramFree = gpu ? fmtBytes(gpu.vram_free_mb) : '<span class="muted">—</span>';
+          return `
+            <tr>
+              <td>${escapeHtml(w.hostname)}</td>
+              <td><span class="status ${w.status}">${w.status}</span></td>
+              <td>${escapeHtml(w.ip)}</td>
+              <td>${escapeHtml(w.hardware.os)}</td>
+              <td>${w.hardware.cpu_cores}</td>
+              <td>${w.hardware.cpu_percent.toFixed(1)}%</td>
+              <td>${fmtBytes(w.hardware.ram_free_mb)} / ${fmtBytes(w.hardware.ram_total_mb)}</td>
+              <td>${gpuName}</td>
+              <td>${vramFree}</td>
+              <td>${fmtAgo(w.last_seen)}</td>
+            </tr>
+          `;
+        }).join("");
+        document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
+      } catch (err) {
+        document.getElementById("updated").textContent = "update failed: " + err;
+      }
+    }
+
+    refresh();
+    setInterval(refresh, REFRESH_MS);
+  </script>
+</body>
+</html>

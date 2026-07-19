@@ -1,0 +1,21 @@
+
+# Large Model files
+*.gguf
+*.bin
+
+# Python Caches & Virtual Envs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Build & Dependency Directories
+node_modules/
+target/
+dist/
+.env
+
+# Document & Plan files
+mvp.md
+plan.md
