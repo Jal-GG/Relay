@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,7 @@ class HardwareInfo(BaseModel):
     ram_total_mb: int
     ram_free_mb: int
     cpu_percent: float = 0.0
-    gpu: Optional[GpuInfo] = None
+    gpu: Optional[GpuInfo] = None  # Optional kept: pynvml may be absent
 
 
 class RegisterRequest(BaseModel):
@@ -41,7 +41,7 @@ class WorkerStatus(BaseModel):
     worker_id: str
     hostname: str
     ip: str
-    status: str = "online"
+    status: Literal["online", "offline"] = "online"
     last_seen: datetime
     hardware: HardwareInfo
 

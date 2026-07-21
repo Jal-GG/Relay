@@ -57,7 +57,8 @@ def collect_hardware() -> HardwareInfo:
         cpu_cores=psutil.cpu_count(logical=True) or 0,
         ram_total_mb=int(vm.total // (1024 * 1024)),
         ram_free_mb=int(vm.available // (1024 * 1024)),
-        cpu_percent=psutil.cpu_percent(interval=None),
+        # interval=0.1 blocks briefly but avoids the 0.0 on first call that interval=None gives.
+        cpu_percent=psutil.cpu_percent(interval=0.1),
         gpu=detect_gpu(),
     )
 

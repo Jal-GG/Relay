@@ -4,7 +4,7 @@ import argparse
 import logging
 import signal
 import sys
-import time
+import threading
 from urllib.parse import urljoin
 
 import httpx
@@ -48,11 +48,11 @@ def run(coordinator_url: str, worker_id: str | None) -> int:
             return 1
         log.info("registered as %s", reg.worker_id)
 
-        stopping = {"flag": False}
+        stop_event = threading.Event()
 
         def handle_signal(signum, frame):
             log.info("received signal %s, stopping", signum)
-            stopping["flag"] = True
+            stop_event.set()
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
@@ -61,7 +61,7 @@ def run(coordinator_url: str, worker_id: str | None) -> int:
                 # SIGTERM cannot always be installed on Windows — skip quietly.
                 pass
 
-        while not stopping["flag"]:
+        while not stop_event.is_set():
             try:
                 hb = make_heartbeat(reg.worker_id)
                 resp = client.post(url(coordinator_url, ROUTES["heartbeat"]), json=hb.model_dump())
@@ -73,10 +73,7 @@ def run(coordinator_url: str, worker_id: str | None) -> int:
             except Exception as exc:
                 log.exception("unexpected heartbeat error: %s", exc)
 
-            for _ in range(int(HEARTBEAT_INTERVAL_S)):
-                if stopping["flag"]:
-                    break
-                time.sleep(1)
+            stop_event.wait(timeout=HEARTBEAT_INTERVAL_S)
 
     log.info("worker %s shut down cleanly", reg.worker_id)
     return 0

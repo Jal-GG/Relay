@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-from typing import Iterable
 
 from common.models import HeartbeatRequest, RegisterRequest, WorkerStatus, utcnow
 from common.protocol import HEARTBEAT_TIMEOUT_S
@@ -36,44 +35,34 @@ class ClusterState:
             existing.status = "online"
             return existing
 
-    def _refresh_status(self, status: WorkerStatus) -> None:
+    def sweep_stale(self) -> None:
+        """Mark workers offline if they haven't sent a heartbeat within the timeout window.
+        Called periodically by the background sweeper in the coordinator process.
+        """
+        with self._lock:
+            for status in self._workers.values():
+                if status.status == "online" and status.is_stale(self._heartbeat_timeout_s):
+                    status.status = "offline"
+
+    def _mark_stale_if_needed(self, status: WorkerStatus) -> None:
+        """Inline check used by read paths that must reflect staleness immediately."""
         if status.is_stale(self._heartbeat_timeout_s) and status.status == "online":
             status.status = "offline"
 
     def list_workers(self) -> list[WorkerStatus]:
         with self._lock:
+            # Ensure reads see up-to-date status even between sweep intervals.
             for status in self._workers.values():
-                self._refresh_status(status)
+                self._mark_stale_if_needed(status)
             return list(self._workers.values())
 
     def get_worker(self, worker_id: str) -> WorkerStatus | None:
         with self._lock:
             status = self._workers.get(worker_id)
             if status is not None:
-                self._refresh_status(status)
+                self._mark_stale_if_needed(status)
             return status
 
     def remove_worker(self, worker_id: str) -> None:
         with self._lock:
             self._workers.pop(worker_id, None)
-
-
-def workers_to_dict(workers: Iterable[WorkerStatus]) -> list[dict]:
-    return [
-        {
-            "worker_id": w.worker_id,
-            "hostname": w.hostname,
-            "ip": w.ip,
-            "status": w.status,
-            "last_seen": w.last_seen.isoformat(),
-            "hardware": {
-                "os": w.hardware.os,
-                "cpu_cores": w.hardware.cpu_cores,
-                "ram_total_mb": w.hardware.ram_total_mb,
-                "ram_free_mb": w.hardware.ram_free_mb,
-                "cpu_percent": w.hardware.cpu_percent,
-                "gpu": w.hardware.gpu.model_dump() if w.hardware.gpu else None,
-            },
-        }
-        for w in workers
-    ]
