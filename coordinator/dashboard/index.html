@@ -73,8 +73,25 @@
     }
     .status.online { color: var(--online); background: rgba(63, 185, 80, 0.12); }
     .status.offline { color: var(--offline); background: rgba(248, 81, 73, 0.12); }
+    .status.pending { color: var(--muted); background: rgba(139, 148, 158, 0.12); }
+    .status.running { color: var(--accent); background: rgba(88, 166, 255, 0.12); }
+    .status.completed { color: var(--online); background: rgba(63, 185, 80, 0.12); }
+    .status.failed { color: var(--offline); background: rgba(248, 81, 73, 0.12); }
+    .status.timed_out { color: var(--offline); background: rgba(248, 81, 73, 0.12); }
     .muted { color: var(--muted); }
     .empty { text-align: center; color: var(--muted); padding: 32px; }
+    h2 { font-size: 16px; margin: 28px 0 12px; letter-spacing: 0.5px; }
+    h2 .accent { color: var(--accent); }
+    .summary { display: flex; gap: 16px; margin-bottom: 12px; }
+    .summary .pill {
+      padding: 4px 12px;
+      border-radius: 6px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .summary .pill .count { font-weight: 600; color: var(--text); margin-left: 4px; }
   </style>
 </head>
 <body>
@@ -103,6 +120,25 @@
     </tbody>
   </table>
 
+  <h2><span class="accent">Tasks</span></h2>
+  <div class="summary" id="task-summary"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Task ID</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Worker</th>
+        <th>Created</th>
+        <th>Completed</th>
+        <th>Result / Error</th>
+      </tr>
+    </thead>
+    <tbody id="task-rows">
+      <tr><td colspan="7" class="empty">No tasks submitted.</td></tr>
+    </tbody>
+  </table>
+
   <script>
     const REFRESH_MS = 3000;
 
@@ -128,36 +164,85 @@
 
     async function refresh() {
       try {
-        const res = await fetch("/workers");
-        const workers = await res.json();
+        const [workersRes, tasksRes] = await Promise.all([
+          fetch("/workers"),
+          fetch("/tasks"),
+        ]);
+        const workers = await workersRes.json();
+        const tasks = await tasksRes.json();
         const rows = document.getElementById("rows");
         if (!workers.length) {
           rows.innerHTML = '<tr><td colspan="10" class="empty">No workers registered.</td></tr>';
-          return;
+        } else {
+          rows.innerHTML = workers.map(w => {
+            const gpu = w.hardware.gpu;
+            const gpuName = gpu ? escapeHtml(gpu.name) : '<span class="muted">none</span>';
+            const vramFree = gpu ? fmtBytes(gpu.vram_free_mb) : '<span class="muted">—</span>';
+            return `
+              <tr>
+                <td>${escapeHtml(w.hostname)}</td>
+                <td><span class="status ${w.status}">${w.status}</span></td>
+                <td>${escapeHtml(w.ip)}</td>
+                <td>${escapeHtml(w.hardware.os)}</td>
+                <td>${w.hardware.cpu_cores}</td>
+                <td>${w.hardware.cpu_percent.toFixed(1)}%</td>
+                <td>${fmtBytes(w.hardware.ram_free_mb)} / ${fmtBytes(w.hardware.ram_total_mb)}</td>
+                <td>${gpuName}</td>
+                <td>${vramFree}</td>
+                <td>${fmtAgo(w.last_seen)}</td>
+              </tr>
+            `;
+          }).join("");
         }
-        rows.innerHTML = workers.map(w => {
-          const gpu = w.hardware.gpu;
-          const gpuName = gpu ? escapeHtml(gpu.name) : '<span class="muted">none</span>';
-          const vramFree = gpu ? fmtBytes(gpu.vram_free_mb) : '<span class="muted">—</span>';
-          return `
-            <tr>
-              <td>${escapeHtml(w.hostname)}</td>
-              <td><span class="status ${w.status}">${w.status}</span></td>
-              <td>${escapeHtml(w.ip)}</td>
-              <td>${escapeHtml(w.hardware.os)}</td>
-              <td>${w.hardware.cpu_cores}</td>
-              <td>${w.hardware.cpu_percent.toFixed(1)}%</td>
-              <td>${fmtBytes(w.hardware.ram_free_mb)} / ${fmtBytes(w.hardware.ram_total_mb)}</td>
-              <td>${gpuName}</td>
-              <td>${vramFree}</td>
-              <td>${fmtAgo(w.last_seen)}</td>
-            </tr>
-          `;
-        }).join("");
+
+        renderTasks(tasks);
         document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
       } catch (err) {
         document.getElementById("updated").textContent = "update failed: " + err;
       }
+    }
+
+    function renderTasks(tasks) {
+      const summary = document.getElementById("task-summary");
+      const rows = document.getElementById("task-rows");
+      if (!tasks.length) {
+        summary.innerHTML = "";
+        rows.innerHTML = '<tr><td colspan="7" class="empty">No tasks submitted.</td></tr>';
+        return;
+      }
+      const counts = {};
+      for (const t of tasks) counts[t.status] = (counts[t.status] || 0) + 1;
+      summary.innerHTML = Object.entries(counts).map(([status, n]) =>
+        `<span class="pill"><span class="status ${status}">${status}</span><span class="count">${n}</span></span>`
+      ).join("");
+
+      const sorted = tasks.slice().sort((a, b) =>
+        new Date(b.created_at) - new Date(a.created_at)
+      ).slice(0, 50);
+
+      rows.innerHTML = sorted.map(t => {
+        const shortId = t.task_id.slice(0, 8);
+        const detail = t.error
+          ? `<span class="muted">${escapeHtml(t.error)}</span>`
+          : t.result
+            ? escapeHtml(JSON.stringify(t.result))
+            : '<span class="muted">—</span>';
+        const worker = t.worker_id
+          ? escapeHtml(t.worker_id)
+          : '<span class="muted">—</span>';
+        const completed = t.completed_at ? fmtAgo(t.completed_at) : '<span class="muted">—</span>';
+        return `
+          <tr>
+            <td title="${escapeHtml(t.task_id)}">${shortId}</td>
+            <td>${escapeHtml(t.type)}</td>
+            <td><span class="status ${t.status}">${t.status}</span></td>
+            <td>${worker}</td>
+            <td>${fmtAgo(t.created_at)}</td>
+            <td>${completed}</td>
+            <td>${detail}</td>
+          </tr>
+        `;
+      }).join("");
     }
 
     refresh();

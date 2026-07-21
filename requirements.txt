@@ -4,3 +4,5 @@ psutil>=5.9
 pynvml>=11.5
 pydantic>=2.6
 httpx>=0.27
+numpy>=1.26
+pytest>=8.0
