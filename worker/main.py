@@ -10,20 +10,35 @@ from urllib.parse import urljoin
 import httpx
 
 from common.models import HeartbeatRequest, RegisterRequest, Task, TaskResultRequest
-from common.protocol import HEARTBEAT_INTERVAL_S, ROUTES, TASK_POLL_INTERVAL_S
+from common.protocol import (
+    DEFAULT_INFERENCE_PORT,
+    HEARTBEAT_INTERVAL_S,
+    ROUTES,
+    TASK_POLL_INTERVAL_S,
+)
 from worker.hardware import collect_hardware, local_hostname, local_ip
 from worker.runner import execute_task
 
 log = logging.getLogger("relay.worker")
 
 
-def build_register_request(worker_id: str | None) -> RegisterRequest:
+def build_register_request(
+    worker_id: str | None,
+    inference_port: int | None = None,
+    layer_start: int | None = None,
+    layer_end: int | None = None,
+    model_name: str | None = None,
+) -> RegisterRequest:
     hw = collect_hardware()
     return RegisterRequest(
         worker_id=worker_id or local_hostname(),
         hostname=local_hostname(),
         ip=local_ip(),
         hardware=hw,
+        inference_port=inference_port,
+        layer_start=layer_start,
+        layer_end=layer_end,
+        model_name=model_name,
     )
 
 
@@ -77,8 +92,80 @@ def task_loop(
             stop_event.wait(timeout=TASK_POLL_INTERVAL_S)
 
 
-def run(coordinator_url: str, worker_id: str | None) -> int:
-    reg = build_register_request(worker_id)
+def _parse_layer_spec(spec: str) -> tuple[int, int]:
+    """Parse '0:11' → (0, 11)."""
+    start_s, end_s = spec.split(":")
+    return int(start_s), int(end_s)
+
+
+def _start_inference_server(
+    model_name: str,
+    layer_start: int,
+    layer_end: int,
+    inference_port: int,
+    split_path: str | None,
+) -> tuple[object, int]:
+    """Load model layers and start the inference HTTP server in a daemon thread.
+
+    Returns ``(runner, port)``.
+    """
+    import uvicorn
+
+    from worker.inference import InferenceRunner
+    from worker.server import create_inference_app
+
+    num_layers = layer_end - layer_start
+    is_first = layer_start == 0
+    # Always load norm + lm_head so the worker can act as the last stage
+    # (or the only stage in a single-worker pipeline).  The coordinator
+    # tells the worker whether to produce logits via is_last per request.
+    is_last = True
+
+    runner = InferenceRunner(
+        model_name=model_name,
+        start_layer=layer_start,
+        end_layer=layer_end,
+        is_first=is_first,
+        is_last=is_last,
+        split_path=split_path,
+    )
+    app = create_inference_app(runner)
+
+    config = uvicorn.Config(
+        app, host="0.0.0.0", port=inference_port, log_level="warning",
+    )
+    server = uvicorn.Server(config)
+
+    t = threading.Thread(target=server.run, daemon=True, name="inference-server")
+    t.start()
+    log.info("Inference server listening on port %d", inference_port)
+    return runner, inference_port
+
+
+def run(
+    coordinator_url: str,
+    worker_id: str | None,
+    model_name: str | None = None,
+    layer_spec: str | None = None,
+    inference_port: int = DEFAULT_INFERENCE_PORT,
+    split_path: str | None = None,
+) -> int:
+    layer_start: int | None = None
+    layer_end: int | None = None
+
+    if model_name and layer_spec:
+        layer_start, layer_end = _parse_layer_spec(layer_spec)
+        _start_inference_server(
+            model_name, layer_start, layer_end, inference_port, split_path,
+        )
+
+    reg = build_register_request(
+        worker_id,
+        inference_port=inference_port if model_name else None,
+        layer_start=layer_start,
+        layer_end=layer_end,
+        model_name=model_name,
+    )
     log.info("registering %s (%s) with %s", reg.worker_id, reg.ip, coordinator_url)
 
     with httpx.Client(timeout=10.0) as client:
@@ -137,6 +224,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("coordinator", help="Coordinator base URL, e.g. http://192.168.1.10:8000")
     p.add_argument("--worker-id", default=None, help="Override worker id (defaults to hostname)")
     p.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
+    # Phase 3 — inference
+    p.add_argument("--model", default=None, help="HF model name for inference (e.g. TinyLlama/TinyLlama-1.1B-Chat-v1.0)")
+    p.add_argument("--layers", default=None, help="Layer range, e.g. '0:11' or '11:22'")
+    p.add_argument("--inference-port", type=int, default=DEFAULT_INFERENCE_PORT, help=f"Inference server port (default: {DEFAULT_INFERENCE_PORT})")
+    p.add_argument("--split-path", default=None, help="Path to a split model file from tools.split_model")
     return p.parse_args(argv)
 
 
@@ -146,7 +238,14 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
-    return run(args.coordinator, args.worker_id)
+    return run(
+        coordinator_url=args.coordinator,
+        worker_id=args.worker_id,
+        model_name=args.model,
+        layer_spec=args.layers,
+        inference_port=args.inference_port,
+        split_path=args.split_path,
+    )
 
 
 if __name__ == "__main__":

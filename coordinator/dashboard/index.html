@@ -92,6 +92,66 @@
       color: var(--muted);
     }
     .summary .pill .count { font-weight: 600; color: var(--text); margin-left: 4px; }
+    .pipeline-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin: 8px 0;
+    }
+    .pipeline-stage {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      min-width: 0;
+    }
+    .pipeline-stage .label { color: var(--accent); font-weight: 600; }
+    .pipeline-stage .layers { color: var(--muted); }
+    .pipeline-arrow { color: var(--muted); font-size: 16px; }
+    .infer-box {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      margin: 12px 0;
+    }
+    .infer-box textarea {
+      flex: 1;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-family: inherit;
+      font-size: 13px;
+      resize: vertical;
+      min-height: 60px;
+    }
+    .infer-box button {
+      padding: 10px 20px;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .infer-box button:disabled { opacity: 0.5; cursor: wait; }
+    .infer-output {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px;
+      font-size: 13px;
+      min-height: 40px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .infer-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .infer-error { color: var(--offline); }
   </style>
 </head>
 <body>
@@ -139,6 +199,17 @@
     </tbody>
   </table>
 
+  <h2><span class="accent">Pipeline</span></h2>
+  <div id="pipeline-view"><span class="muted">No inference workers registered.</span></div>
+
+  <h2><span class="accent">Inference</span></h2>
+  <div class="infer-box">
+    <textarea id="prompt" placeholder="Enter a prompt…" rows="2">The capital of France is</textarea>
+    <button id="generate-btn" onclick="doGenerate()">Generate</button>
+  </div>
+  <div class="infer-output" id="infer-output"><span class="muted">Output will appear here.</span></div>
+  <div class="infer-meta" id="infer-meta"></div>
+
   <script>
     const REFRESH_MS = 3000;
 
@@ -164,12 +235,14 @@
 
     async function refresh() {
       try {
-        const [workersRes, tasksRes] = await Promise.all([
+        const [workersRes, tasksRes, pipelineRes] = await Promise.all([
           fetch("/workers"),
           fetch("/tasks"),
+          fetch("/pipeline"),
         ]);
         const workers = await workersRes.json();
         const tasks = await tasksRes.json();
+        const pipelineStages = await pipelineRes.json();
         const rows = document.getElementById("rows");
         if (!workers.length) {
           rows.innerHTML = '<tr><td colspan="10" class="empty">No workers registered.</td></tr>';
@@ -195,10 +268,60 @@
           }).join("");
         }
 
+        renderPipeline(pipelineStages);
         renderTasks(tasks);
         document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
       } catch (err) {
         document.getElementById("updated").textContent = "update failed: " + err;
+      }
+    }
+
+    function renderPipeline(stages) {
+      const el = document.getElementById("pipeline-view");
+      if (!stages || !stages.length) {
+        el.innerHTML = '<span class="muted">No inference workers registered.</span>';
+        return;
+      }
+      let html = '<div class="pipeline-bar">';
+      stages.forEach((s, i) => {
+        if (i > 0) html += '<span class="pipeline-arrow">→</span>';
+        html += `
+          <div class="pipeline-stage">
+            <div class="label">${escapeHtml(s.worker_id)}</div>
+            <div class="layers">layers ${s.layer_start}-${s.layer_end - 1}</div>
+            <div class="muted">${escapeHtml(s.model_name)}</div>
+          </div>
+        `;
+      });
+      html += '</div>';
+      el.innerHTML = html;
+    }
+
+    async function doGenerate() {
+      const btn = document.getElementById("generate-btn");
+      const output = document.getElementById("infer-output");
+      const meta = document.getElementById("infer-meta");
+      const prompt = document.getElementById("prompt").value;
+      btn.disabled = true;
+      output.innerHTML = '<span class="muted">Generating…</span>';
+      meta.innerHTML = "";
+      try {
+        const resp = await fetch("/generate", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({prompt, max_new_tokens: 50, temperature: 0.0}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          output.innerHTML = `<span class="infer-error">Error: ${escapeHtml(data.detail || "unknown")}</span>`;
+        } else {
+          output.textContent = data.text;
+          meta.textContent = `${data.input_tokens} input + ${data.output_tokens} output tokens in ${data.elapsed_ms}ms`;
+        }
+      } catch (err) {
+        output.innerHTML = `<span class="infer-error">Request failed: ${escapeHtml(err)}</span>`;
+      } finally {
+        btn.disabled = false;
       }
     }
 

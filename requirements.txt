@@ -6,3 +6,7 @@ pydantic>=2.6
 httpx>=0.27
 numpy>=1.26
 pytest>=8.0
+# Phase 3 — distributed model loading
+torch>=2.2
+transformers>=4.40
+safetensors>=0.4
