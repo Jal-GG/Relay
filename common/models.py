@@ -31,6 +31,11 @@ class RegisterRequest(BaseModel):
     hostname: str
     ip: str
     hardware: HardwareInfo
+    # Phase 3 — inference capabilities
+    inference_port: Optional[int] = None
+    layer_start: Optional[int] = None
+    layer_end: Optional[int] = None
+    model_name: Optional[str] = None
 
 
 class HeartbeatRequest(BaseModel):
@@ -45,10 +50,29 @@ class WorkerStatus(BaseModel):
     status: Literal["online", "offline"] = "online"
     last_seen: datetime
     hardware: HardwareInfo
+    # Phase 3 — inference capabilities
+    inference_port: Optional[int] = None
+    layer_start: Optional[int] = None
+    layer_end: Optional[int] = None
+    model_name: Optional[str] = None
 
     def is_stale(self, heartbeat_timeout_s: float) -> bool:
         age = (utcnow() - self.last_seen).total_seconds()
         return age > heartbeat_timeout_s
+
+    @property
+    def has_inference(self) -> bool:
+        """True if this worker registered with layer-range inference capabilities."""
+        return (
+            self.inference_port is not None
+            and self.layer_start is not None
+            and self.layer_end is not None
+        )
+
+    @property
+    def inference_url(self) -> str:
+        """Base URL for the worker's inference HTTP server."""
+        return f"http://{self.ip}:{self.inference_port}"
 
 
 # ── Phase 2 — Remote task execution ──────────────────────────────────
@@ -94,3 +118,43 @@ class TaskResultRequest(BaseModel):
     success: bool
     result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
+
+
+# ── Phase 3 — Distributed model loading ──────────────────────────────
+
+
+class GenerateRequest(BaseModel):
+    prompt: str
+    max_new_tokens: int = 50
+    temperature: float = 0.0  # 0 = greedy/deterministic
+
+
+class GenerateResponse(BaseModel):
+    text: str
+    input_tokens: int
+    output_tokens: int
+    elapsed_ms: float
+
+
+class ForwardRequest(BaseModel):
+    """Sent by the coordinator to a worker's inference server."""
+    token_ids: Optional[list[int]] = None  # for the first worker
+    activations_b64: Optional[str] = None  # for subsequent workers
+    is_last: bool = False  # whether this worker should produce final logits
+
+
+class ForwardResponse(BaseModel):
+    """Returned by a worker's inference server after a forward pass."""
+    activations_b64: Optional[str] = None  # intermediate output
+    logits_b64: Optional[str] = None  # final output (last worker only)
+
+
+class PipelineStage(BaseModel):
+    """Read-only view of one stage in the inference pipeline."""
+    worker_id: str
+    ip: str
+    inference_port: int
+    layer_start: int
+    layer_end: int
+    model_name: str
+    status: str

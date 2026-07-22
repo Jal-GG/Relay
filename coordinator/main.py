@@ -8,12 +8,14 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from common.models import (
+    GenerateRequest,
     HeartbeatRequest,
     RegisterRequest,
     TaskRequest,
     TaskResultRequest,
 )
 from common.protocol import ROUTES, TASK_SWEEP_INTERVAL_S
+from coordinator.pipeline import Pipeline
 from coordinator.state import ClusterState, TaskState
 
 
@@ -41,6 +43,7 @@ def _start_task_sweeper(tasks: TaskState, stop_event: threading.Event) -> None:
 def create_app() -> FastAPI:
     state = ClusterState()
     tasks = TaskState(state)
+    pipeline = Pipeline(state)
     stop_event = threading.Event()
 
     @asynccontextmanager
@@ -50,7 +53,7 @@ def create_app() -> FastAPI:
         yield
         stop_event.set()
 
-    app = FastAPI(title="Relay Coordinator", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Relay Coordinator", version="0.3.0", lifespan=lifespan)
 
     @app.post(ROUTES["register"])
     def register(req: RegisterRequest) -> dict:
@@ -95,6 +98,20 @@ def create_app() -> FastAPI:
     @app.get(ROUTES["tasks"])
     def list_tasks() -> JSONResponse:
         return JSONResponse([t.model_dump(mode="json") for t in tasks.list_tasks()])
+
+    # ── Phase 3 — distributed inference ──────────────────────────────
+
+    @app.post(ROUTES["generate"])
+    def generate(req: GenerateRequest) -> JSONResponse:
+        try:
+            result = pipeline.generate(req)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return JSONResponse(result.model_dump())
+
+    @app.get(ROUTES["pipeline"])
+    def get_pipeline() -> JSONResponse:
+        return JSONResponse([s.model_dump() for s in pipeline.get_pipeline_view()])
 
     @app.get(ROUTES["dashboard"], response_class=HTMLResponse)
     def dashboard() -> HTMLResponse:

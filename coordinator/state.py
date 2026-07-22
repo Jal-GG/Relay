@@ -31,6 +31,10 @@ class ClusterState:
                 status="online",
                 last_seen=utcnow(),
                 hardware=req.hardware,
+                inference_port=req.inference_port,
+                layer_start=req.layer_start,
+                layer_end=req.layer_end,
+                model_name=req.model_name,
             )
             self._workers[req.worker_id] = status
             return status
