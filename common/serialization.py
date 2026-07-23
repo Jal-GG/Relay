@@ -19,7 +19,12 @@ def serialize_tensor(tensor: Any) -> str:
 
 
 def deserialize_tensor(b64: str) -> Any:
-    """Deserialize a base64 string back into a tensor (or any picklable object)."""
+    """Deserialize a base64 string back into a tensor (or any picklable object).
+
+    ``weights_only=False`` is explicit: activation tensors are coordinator-
+    generated data we trust.  PyTorch ≥ 2.4 warns when this kwarg is omitted
+    because the default is changing to True in a future release.
+    """
     torch = _torch()
     raw = base64.b64decode(b64)
-    return torch.load(io.BytesIO(raw))
+    return torch.load(io.BytesIO(raw), weights_only=False)

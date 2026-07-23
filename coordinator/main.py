@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -102,9 +103,10 @@ def create_app() -> FastAPI:
     # ── Phase 3 — distributed inference ──────────────────────────────
 
     @app.post(ROUTES["generate"])
-    def generate(req: GenerateRequest) -> JSONResponse:
+    async def generate(req: GenerateRequest) -> JSONResponse:
+        loop = asyncio.get_event_loop()
         try:
-            result = pipeline.generate(req)
+            result = await loop.run_in_executor(None, pipeline.generate, req)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return JSONResponse(result.model_dump())
