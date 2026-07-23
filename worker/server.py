@@ -18,7 +18,7 @@ def create_inference_app(runner) -> FastAPI:
     ``forward_from_tokens`` / ``forward_from_activations`` and the
     ``is_first`` / ``is_last`` flags).
     """
-    app = FastAPI(title="Relay Worker Inference", version="0.3.0")
+    app = FastAPI(title="Relay Worker Inference", version="0.4.0")
 
     @app.get("/health")
     def health() -> dict:
@@ -29,6 +29,7 @@ def create_inference_app(runner) -> FastAPI:
             "layer_start": runner.start_layer,
             "layer_end": runner.end_layer,
             "num_layers": runner.num_layers,
+            "device": runner.backend.device,
         }
 
     @app.post("/forward")

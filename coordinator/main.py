@@ -54,7 +54,7 @@ def create_app() -> FastAPI:
         yield
         stop_event.set()
 
-    app = FastAPI(title="Relay Coordinator", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="Relay Coordinator", version="0.4.0", lifespan=lifespan)
 
     @app.post(ROUTES["register"])
     def register(req: RegisterRequest) -> dict:

@@ -52,6 +52,7 @@ class Pipeline:
                 layer_end=s.layer_end or 0,
                 model_name=s.model_name or "",
                 status=s.status,
+                device=s.device,
             )
             for s in stages
         ]

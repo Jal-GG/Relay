@@ -35,6 +35,7 @@ class ClusterState:
                 layer_start=req.layer_start,
                 layer_end=req.layer_end,
                 model_name=req.model_name,
+                device=req.device,
             )
             self._workers[req.worker_id] = status
             return status

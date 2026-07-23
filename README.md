@@ -2,20 +2,23 @@
 
 Distributed inference MVP — heterogeneous consumer hardware collaboratively running a model too large for any single machine.
 
-## Status — Distributed model loading
+## Status — Heterogeneous execution
 
 Coordinator accepts worker registration and heartbeats, dispatches tasks to workers, and tracks results. Workers poll for tasks, execute them, and report results back. Three task types: `matrix_multiply`, `hash_file`, `sleep`. Round-robin scheduling via pull-based polling. Error handling: worker crash → task marked `failed`; task deadline exceeded → task marked `timed_out`. No auth, no TLS, no persistent storage, no retry logic.
 
 **Phase 3:** A model is split across two or more workers by layer range. The coordinator tokenizes a prompt, sends token IDs to the first worker, forwards hidden-state activations between workers, and samples greedily from the final worker's logits. Correctness is verified by comparing split-pipeline output to single-model output token-for-token.
 
+**Phase 4:** GPU and CPU nodes participate in the same pipeline. Workers auto-detect CUDA availability and load their layer range onto the GPU when present, falling back to CPU. A `InferenceBackend` abstraction (`CpuBackend` / `CudaBackend`) handles device placement — the coordinator doesn't know or care which backend a worker uses. A benchmark tool measures tokens/sec for single-CPU, single-GPU, and split (GPU+CPU) configurations.
+
 ### Layout
 
 ```
 coordinator/   FastAPI app + in-memory cluster state + task state + dashboard + pipeline
-worker/        Hardware detection + registration/heartbeat loop + task runner + inference
+worker/        Hardware detection + registration/heartbeat loop + task runner + inference + backends
 common/        Shared Pydantic models + protocol constants + tensor serialization
-tools/         Offline model splitter (Phase 3)
+tools/         Offline model splitter + benchmark tool
 tests/         pytest tests (runner, task state, API, inference, correctness)
+docs/          Development log
 ```
 
 ### Setup
@@ -131,6 +134,60 @@ Verify that the split pipeline produces the same tokens as the full model:
 python -m tests.correctness --model TinyLlama/TinyLlama-1.1B-Chat-v1.0
 ```
 
+### Run — heterogeneous GPU + CPU pipeline (Phase 4)
+
+1. Start the coordinator:
+
+```bash
+python -m coordinator.main
+```
+
+2. On the **GPU machine** (layers 0–15, auto-detects CUDA):
+
+```bash
+python -m worker.main http://<coordinator-ip>:8000 \
+  --worker-id gpu-node \
+  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --layers 0:16 \
+  --inference-port 9001 \
+  --device auto
+```
+
+3. On the **CPU machine** (layers 16–21, forced CPU):
+
+```bash
+python -m worker.main http://<coordinator-ip>:8000 \
+  --worker-id cpu-node \
+  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --layers 16:22 \
+  --inference-port 9001 \
+  --device cpu
+```
+
+4. Generate text — the pipeline runs GPU → CPU transparently:
+
+```bash
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"The capital of France is","max_new_tokens":20}'
+```
+
+5. The dashboard pipeline view shows which device each stage uses (GPU/CPU badges).
+
+### Benchmark (Phase 4)
+
+Measure tokens/sec for single-CPU, single-GPU, and split (GPU+CPU) configurations:
+
+```bash
+python -m tools.benchmark \
+  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --prompt "The capital of France is" \
+  --max-tokens 20 \
+  --split-at 11
+```
+
+Output is a comparison table + JSON file (`benchmark_results.json`).
+
 ### Behavior
 
 - Worker registers on startup, then POSTs a heartbeat every 5 seconds with refreshed CPU/RAM/GPU stats.
@@ -155,7 +212,7 @@ python -m tests.correctness --model TinyLlama/TinyLlama-1.1B-Chat-v1.0
 | POST   | `/tasks/result`  | `TaskResultRequest` | `{"task_id":...,"status":"completed"}` |
 | GET    | `/tasks`         | —                   | list of task objects |
 | POST   | `/generate`      | `GenerateRequest`   | `GenerateResponse` |
-| GET    | `/pipeline`      | —                   | list of `PipelineStage` objects |
+| GET    | `/pipeline`      | —                   | list of `PipelineStage` objects (includes `device` field) |
 | GET    | `/`              | —                   | dashboard HTML |
 
 ### Verifying
@@ -195,3 +252,5 @@ python -m pytest tests/ -v
 - `torch` and `transformers` are required for Phase 3 inference. Tests that need them are automatically skipped when not installed.
 - All state lives in coordinator memory — restart the coordinator and the cluster is empty until workers re-register (which they won't, since they only register on startup. Stop and restart workers to repopulate).
 - Inference is CPU-only, stateless per-request (no KV cache), and uses greedy/temperature=0 sampling.
+- **Phase 4:** Workers with `--device auto` (default) auto-detect CUDA and load layers onto GPU. CPU workers use `--device cpu`. The coordinator is backend-agnostic — it sends/receives activations without knowing the device. Mixed GPU+CPU pipelines work transparently.
+- TODO: add support for GLM models and other unsupported models.

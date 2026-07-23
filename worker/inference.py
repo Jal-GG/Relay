@@ -110,6 +110,11 @@ class InferenceRunner:
       Also works for **any** architecture — module types are derived via
       ``AutoModelForCausalLM.from_config`` (no architecture-specific imports).
 
+    Device placement is handled by an ``InferenceBackend`` (Phase 4).
+    The coordinator doesn't know or care which backend a worker uses — it
+    just sends/receives activations.  The backend moves modules to the target
+    device at load time and moves tensors to/from the device at forward time.
+
     Compatible with transformers ≥ 4.40 and transformers 5.x.
     """
 
@@ -122,6 +127,7 @@ class InferenceRunner:
         is_last: bool,
         split_path: Optional[str] = None,
         dtype: str = "float32",
+        device: str = "auto",
     ) -> None:
         import torch
 
@@ -131,6 +137,10 @@ class InferenceRunner:
         self.is_first = is_first
         self.is_last = is_last
         self.torch = torch
+        self.device = device
+
+        from worker.backends import create_backend
+        self.backend = create_backend(device)
 
         torch_dtype = torch.float32 if dtype == "float32" else torch.float16
 
@@ -139,13 +149,28 @@ class InferenceRunner:
         else:
             self._load_from_full_model(model_name, torch_dtype)
 
+        self._move_to_device()
+
         n = len(self.layers)
         log.info(
-            "InferenceRunner ready: layers %d-%d (%d), first=%s last=%s",
-            start_layer, end_layer - 1, n, is_first, is_last,
+            "InferenceRunner ready: layers %d-%d (%d), first=%s last=%s, device=%s",
+            start_layer, end_layer - 1, n, is_first, is_last, self.backend.device,
         )
 
     # ── loading ──────────────────────────────────────────────────────────────
+
+    def _move_to_device(self) -> None:
+        """Move all loaded modules to the backend's device."""
+        if self.embed_tokens is not None:
+            self.backend.move_module(self.embed_tokens)
+        for layer in self.layers:
+            self.backend.move_module(layer)
+        if self.norm is not None:
+            self.backend.move_module(self.norm)
+        if self.lm_head is not None:
+            self.backend.move_module(self.lm_head)
+        if self.rotary_emb is not None:
+            self.backend.move_module(self.rotary_emb)
 
     def _load_from_full_model(self, model_name: str, dtype: Any) -> None:
         """Download the full model, keep only the layers assigned to this worker."""
@@ -312,36 +337,43 @@ class InferenceRunner:
         torch = self.torch
         with torch.no_grad():
             input_ids = torch.tensor([token_ids], dtype=torch.long)
+            input_ids = self.backend.move_tensor(input_ids)
             hidden = self.embed_tokens(input_ids)
             seq_len = input_ids.shape[1]
             pos = self._position_ids(seq_len)
+            pos = self.backend.move_tensor(pos)
             for layer in self.layers:
                 hidden = self._layer_forward(layer, hidden, pos)
-        return hidden
+        return self.backend.to_cpu(hidden)
 
     def forward_from_tokens_to_logits(self, token_ids: list[int]) -> Any:
         """Single-worker pipeline: embed → layers → norm → lm_head → logits."""
         torch = self.torch
         with torch.no_grad():
             input_ids = torch.tensor([token_ids], dtype=torch.long)
+            input_ids = self.backend.move_tensor(input_ids)
             hidden = self.embed_tokens(input_ids)
             seq_len = input_ids.shape[1]
             pos = self._position_ids(seq_len)
+            pos = self.backend.move_tensor(pos)
             for layer in self.layers:
                 hidden = self._layer_forward(layer, hidden, pos)
             hidden = self.norm(hidden)
             logits = self.lm_head(hidden)
-        return logits
+        return self.backend.to_cpu(logits)
 
     def forward_from_activations(self, hidden_states: Any, is_last: bool) -> Any:
         """Subsequent-worker entry point: run layers on received activations."""
         torch = self.torch
         with torch.no_grad():
+            hidden_states = self.backend.move_tensor(hidden_states)
             seq_len = hidden_states.shape[1]
             pos = self._position_ids(seq_len)
+            pos = self.backend.move_tensor(pos)
             for layer in self.layers:
                 hidden_states = self._layer_forward(layer, hidden_states, pos)
             if is_last:
                 hidden_states = self.norm(hidden_states)
-                return self.lm_head(hidden_states)
-        return hidden_states
+                logits = self.lm_head(hidden_states)
+                return self.backend.to_cpu(logits)
+        return self.backend.to_cpu(hidden_states)

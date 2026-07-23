@@ -297,3 +297,135 @@ def test_deserialize_tensor_weights_only():
         warnings.simplefilter("error", FutureWarning)
         decoded = deserialize_tensor(encoded)  # would raise if weights_only missing
     assert torch.equal(t, decoded)
+
+
+# ── Phase 4 — Backend abstraction ────────────────────────────────────
+
+def test_cpu_backend_device():
+    from worker.backends import CpuBackend
+    backend = CpuBackend()
+    assert backend.device == "cpu"
+
+
+def test_cuda_backend_fallback_without_gpu():
+    """CudaBackend should fall back to CPU gracefully when no GPU is available."""
+    torch = pytest.importorskip("torch")
+    from worker.backends import CudaBackend
+
+    if torch.cuda.is_available():
+        pytest.skip("CUDA is available — fallback path not testable on this machine")
+
+    backend = CudaBackend()
+    assert backend.device == "cpu"
+    assert backend.is_cuda is False
+
+
+def test_create_backend_auto():
+    """create_backend('auto') should pick CUDA if available, else CPU."""
+    torch = pytest.importorskip("torch")
+    from worker.backends import create_backend, CpuBackend, CudaBackend
+
+    backend = create_backend("auto")
+    if torch.cuda.is_available():
+        assert isinstance(backend, CudaBackend)
+    else:
+        assert isinstance(backend, CpuBackend)
+
+
+def test_create_backend_cpu_forced():
+    from worker.backends import create_backend, CpuBackend
+    backend = create_backend("cpu")
+    assert isinstance(backend, CpuBackend)
+    assert backend.device == "cpu"
+
+
+def test_backend_move_tensor():
+    """CpuBackend.move_tensor should keep tensor on CPU."""
+    torch = pytest.importorskip("torch")
+    from worker.backends import CpuBackend
+
+    backend = CpuBackend()
+    t = torch.randn(2, 3)
+    moved = backend.move_tensor(t)
+    assert moved.device.type == "cpu"
+
+
+def test_backend_to_cpu():
+    """to_cpu should return a CPU tensor regardless of backend."""
+    torch = pytest.importorskip("torch")
+    from worker.backends import CpuBackend
+
+    backend = CpuBackend()
+    t = torch.randn(2, 3)
+    result = backend.to_cpu(t)
+    assert result.device.type == "cpu"
+    assert torch.equal(result, t)
+
+
+def test_inference_runner_accepts_device_param():
+    """InferenceRunner should accept and store the device parameter."""
+    torch = pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    from transformers import LlamaConfig, AutoModelForCausalLM
+    from worker.inference import InferenceRunner
+
+    config = LlamaConfig(
+        vocab_size=100, hidden_size=64, intermediate_size=128,
+        num_hidden_layers=4, num_attention_heads=4, num_key_value_heads=4,
+        max_position_embeddings=128, torch_dtype=torch.float32,
+    )
+    model = AutoModelForCausalLM.from_config(config).eval()
+
+    runner = InferenceRunner.__new__(InferenceRunner)
+    runner.torch = torch
+    runner.model_name = "test"
+    runner.start_layer = 0
+    runner.end_layer = 4
+    runner.is_first = True
+    runner.is_last = True
+    runner.device = "cpu"
+    from worker.backends import create_backend
+    runner.backend = create_backend("cpu")
+    runner.config = config
+    runner.embed_tokens = model.model.embed_tokens
+    runner.layers = model.model.layers[0:4]
+    runner.rotary_emb = getattr(model.model, "rotary_emb", None)
+    runner.norm = model.model.norm
+    runner.lm_head = model.lm_head
+    runner._move_to_device()
+
+    token_ids = [5, 10, 15, 20]
+    logits = runner.forward_from_tokens_to_logits(token_ids)
+    assert logits.device.type == "cpu"
+
+    with torch.no_grad():
+        full_logits = model(torch.tensor([token_ids])).logits
+    assert torch.allclose(logits, full_logits, atol=1e-5)
+
+
+def test_pipeline_stage_includes_device():
+    """PipelineStage model should accept the device field."""
+    from common.models import PipelineStage
+
+    stage = PipelineStage(
+        worker_id="w1", ip="10.0.0.1", inference_port=9001,
+        layer_start=0, layer_end=11, model_name="test", status="online",
+        device="cuda",
+    )
+    assert stage.device == "cuda"
+
+
+def test_register_with_device():
+    """RegisterRequest should accept and serialize the device field."""
+    from common.models import RegisterRequest, HardwareInfo
+
+    req = RegisterRequest(
+        worker_id="w1", hostname="w1", ip="10.0.0.1",
+        hardware=HardwareInfo(
+            os="test", cpu_cores=4, ram_total_mb=8192, ram_free_mb=4096,
+        ),
+        inference_port=9001, layer_start=0, layer_end=11,
+        model_name="test", device="cuda",
+    )
+    d = req.model_dump()
+    assert d["device"] == "cuda"

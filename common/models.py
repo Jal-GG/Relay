@@ -36,6 +36,8 @@ class RegisterRequest(BaseModel):
     layer_start: Optional[int] = None
     layer_end: Optional[int] = None
     model_name: Optional[str] = None
+    # Phase 4 — heterogeneous execution
+    device: Optional[str] = None  # "cpu", "cuda", or None if not an inference worker
 
 
 class HeartbeatRequest(BaseModel):
@@ -55,6 +57,8 @@ class WorkerStatus(BaseModel):
     layer_start: Optional[int] = None
     layer_end: Optional[int] = None
     model_name: Optional[str] = None
+    # Phase 4 — heterogeneous execution
+    device: Optional[str] = None
 
     def is_stale(self, heartbeat_timeout_s: float) -> bool:
         age = (utcnow() - self.last_seen).total_seconds()
@@ -158,3 +162,4 @@ class PipelineStage(BaseModel):
     layer_end: int
     model_name: str
     status: str
+    device: Optional[str] = None  # Phase 4 — "cpu" or "cuda"

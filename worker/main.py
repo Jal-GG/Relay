@@ -28,6 +28,7 @@ def build_register_request(
     layer_start: int | None = None,
     layer_end: int | None = None,
     model_name: str | None = None,
+    device: str | None = None,
 ) -> RegisterRequest:
     hw = collect_hardware()
     return RegisterRequest(
@@ -39,6 +40,7 @@ def build_register_request(
         layer_start=layer_start,
         layer_end=layer_end,
         model_name=model_name,
+        device=device,
     )
 
 
@@ -105,6 +107,7 @@ def _start_inference_server(
     inference_port: int,
     split_path: str | None,
     is_last: bool = True,
+    device: str = "auto",
 ) -> tuple[object, int]:
     """Load model layers and start the inference HTTP server in a daemon thread.
 
@@ -112,6 +115,9 @@ def _start_inference_server(
     weights.  Set it to True only for the last stage in the pipeline (or when
     running a single-worker pipeline).  Keeping it False on intermediate workers
     avoids loading ~2 × hidden_size² parameters unnecessarily.
+
+    ``device`` selects the inference backend: 'auto' (GPU if available),
+    'cpu', or 'cuda'.  See ``worker.backends.create_backend``.
 
     Returns ``(runner, port)``.
     """
@@ -129,6 +135,7 @@ def _start_inference_server(
         is_first=is_first,
         is_last=is_last,
         split_path=split_path,
+        device=device,
     )
     app = create_inference_app(runner)
 
@@ -139,7 +146,7 @@ def _start_inference_server(
 
     t = threading.Thread(target=server.run, daemon=True, name="inference-server")
     t.start()
-    log.info("Inference server listening on port %d", inference_port)
+    log.info("Inference server listening on port %d (device=%s)", inference_port, runner.backend.device)
     return runner, inference_port
 
 
@@ -151,16 +158,19 @@ def run(
     inference_port: int = DEFAULT_INFERENCE_PORT,
     split_path: str | None = None,
     is_last: bool = True,
+    device: str = "auto",
 ) -> int:
     layer_start: int | None = None
     layer_end: int | None = None
+    actual_device: str | None = None
 
     if model_name and layer_spec:
         layer_start, layer_end = _parse_layer_spec(layer_spec)
-        _start_inference_server(
+        runner, _ = _start_inference_server(
             model_name, layer_start, layer_end, inference_port, split_path,
-            is_last=is_last,
+            is_last=is_last, device=device,
         )
+        actual_device = runner.backend.device
 
     reg = build_register_request(
         worker_id,
@@ -168,6 +178,7 @@ def run(
         layer_start=layer_start,
         layer_end=layer_end,
         model_name=model_name,
+        device=actual_device,
     )
     log.info("registering %s (%s) with %s", reg.worker_id, reg.ip, coordinator_url)
 
@@ -242,6 +253,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument("--no-is-last", dest="is_last", action="store_false")
+    # Phase 4 — heterogeneous execution
+    p.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="Inference device: auto (GPU if available), cpu, or cuda (default: auto)",
+    )
     return p.parse_args(argv)
 
 
@@ -259,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         inference_port=args.inference_port,
         split_path=args.split_path,
         is_last=args.is_last,
+        device=args.device,
     )
 
 
