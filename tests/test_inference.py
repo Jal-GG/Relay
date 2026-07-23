@@ -254,3 +254,44 @@ def test_generate_no_workers():
         resp = c.post("/generate", json={"prompt": "hello"})
         assert resp.status_code == 400
         assert "no inference workers" in resp.json()["detail"].lower()
+
+
+# ── split_model validation ─────────────────────────────────────────────
+
+def test_parse_splits_valid():
+    from tools.split_model import _parse_splits
+
+    assert _parse_splits("0:11,11:22") == [(0, 11), (11, 22)]
+    assert _parse_splits("0:4,4:8,8:12") == [(0, 4), (4, 8), (8, 12)]
+
+
+def test_parse_splits_overlap():
+    import pytest
+    from tools.split_model import _parse_splits
+
+    with pytest.raises(ValueError, match="overlapping"):
+        _parse_splits("0:11,10:22")
+
+
+def test_parse_splits_gap():
+    import pytest
+    from tools.split_model import _parse_splits
+
+    with pytest.raises(ValueError, match="gap"):
+        _parse_splits("0:5,10:22")
+
+
+# ── serialization: weights_only explicitly False ───────────────────────
+
+def test_deserialize_tensor_weights_only():
+    """torch.load must not raise FutureWarning about weights_only."""
+    import warnings
+    torch = pytest.importorskip("torch")
+    from common.serialization import serialize_tensor, deserialize_tensor
+
+    t = torch.randn(3, 4)
+    encoded = serialize_tensor(t)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        decoded = deserialize_tensor(encoded)  # would raise if weights_only missing
+    assert torch.equal(t, decoded)

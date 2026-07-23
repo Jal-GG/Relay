@@ -103,6 +103,16 @@ class InferenceRunner:
         else:
             self.embed_tokens = None
 
+        # Guard: this path hard-codes Llama layer classes.  Non-Llama models
+        # (Mistral, Gemma, etc.) must use _load_from_full_model instead.
+        model_type = getattr(self.config, "model_type", "")
+        if model_type not in ("llama", "mistral"):
+            raise NotImplementedError(
+                f"_load_from_split only supports Llama/Mistral architecture, "
+                f"got model_type={model_type!r}. Use the full model loading path "
+                f"(omit --split-path) for other architectures."
+            )
+
         from transformers.models.llama.modeling_llama import (
             LlamaDecoderLayer,
             LlamaRMSNorm,

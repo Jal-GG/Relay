@@ -104,8 +104,14 @@ def _start_inference_server(
     layer_end: int,
     inference_port: int,
     split_path: str | None,
+    is_last: bool = True,
 ) -> tuple[object, int]:
     """Load model layers and start the inference HTTP server in a daemon thread.
+
+    ``is_last`` controls whether the worker loads the final norm and LM-head
+    weights.  Set it to True only for the last stage in the pipeline (or when
+    running a single-worker pipeline).  Keeping it False on intermediate workers
+    avoids loading ~2 × hidden_size² parameters unnecessarily.
 
     Returns ``(runner, port)``.
     """
@@ -114,12 +120,7 @@ def _start_inference_server(
     from worker.inference import InferenceRunner
     from worker.server import create_inference_app
 
-    num_layers = layer_end - layer_start
     is_first = layer_start == 0
-    # Always load norm + lm_head so the worker can act as the last stage
-    # (or the only stage in a single-worker pipeline).  The coordinator
-    # tells the worker whether to produce logits via is_last per request.
-    is_last = True
 
     runner = InferenceRunner(
         model_name=model_name,
@@ -149,6 +150,7 @@ def run(
     layer_spec: str | None = None,
     inference_port: int = DEFAULT_INFERENCE_PORT,
     split_path: str | None = None,
+    is_last: bool = True,
 ) -> int:
     layer_start: int | None = None
     layer_end: int | None = None
@@ -157,6 +159,7 @@ def run(
         layer_start, layer_end = _parse_layer_spec(layer_spec)
         _start_inference_server(
             model_name, layer_start, layer_end, inference_port, split_path,
+            is_last=is_last,
         )
 
     reg = build_register_request(
@@ -229,6 +232,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--layers", default=None, help="Layer range, e.g. '0:11' or '11:22'")
     p.add_argument("--inference-port", type=int, default=DEFAULT_INFERENCE_PORT, help=f"Inference server port (default: {DEFAULT_INFERENCE_PORT})")
     p.add_argument("--split-path", default=None, help="Path to a split model file from tools.split_model")
+    p.add_argument(
+        "--is-last",
+        action="store_true",
+        default=True,
+        help=(
+            "Mark this worker as the last stage in the pipeline (loads final norm "
+            "and LM-head). Set --no-is-last for intermediate workers to save RAM."
+        ),
+    )
+    p.add_argument("--no-is-last", dest="is_last", action="store_false")
     return p.parse_args(argv)
 
 
@@ -245,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         layer_spec=args.layers,
         inference_port=args.inference_port,
         split_path=args.split_path,
+        is_last=args.is_last,
     )
 
 

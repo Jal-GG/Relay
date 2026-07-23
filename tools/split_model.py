@@ -32,6 +32,20 @@ def _parse_splits(spec: str) -> list[tuple[int, int]]:
         splits.append((int(start_s), int(end_s)))
     if not splits:
         raise ValueError("no splits parsed from spec")
+    # Validate contiguous, non-overlapping ranges.
+    for i in range(1, len(splits)):
+        prev_end = splits[i - 1][1]
+        curr_start = splits[i][0]
+        if curr_start < prev_end:
+            raise ValueError(
+                f"overlapping splits: split {i - 1} ends at {prev_end} "
+                f"but split {i} starts at {curr_start}"
+            )
+        if curr_start > prev_end:
+            raise ValueError(
+                f"gap in splits: split {i - 1} ends at {prev_end} "
+                f"but split {i} starts at {curr_start}"
+            )
     return splits
 
 

@@ -12,7 +12,7 @@ from common.models import (
     PipelineStage,
     WorkerStatus,
 )
-from common.protocol import DEFAULT_MAX_NEW_TOKENS, ROUTES
+from common.protocol import DEFAULT_MAX_NEW_TOKENS, DEFAULT_INFER_TIMEOUT_S, ROUTES
 from common.serialization import deserialize_tensor
 from coordinator.state import ClusterState
 
@@ -76,10 +76,10 @@ class Pipeline:
     def generate(self, req: GenerateRequest) -> GenerateResponse:
         import time
 
-        from transformers import AutoTokenizer
-
         stages = self.get_stages()
-        self._validate_pipeline(stages)
+        self._validate_pipeline(stages)  # fail fast before any heavy imports
+
+        from transformers import AutoTokenizer
         model_name = stages[0].model_name or "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
         tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -90,11 +90,14 @@ class Pipeline:
         max_tokens = req.max_new_tokens or DEFAULT_MAX_NEW_TOKENS
         start = time.perf_counter()
 
-        for _ in range(max_tokens):
-            next_token = self._forward_one_token(stages, input_ids + generated_ids)
-            if next_token == tokenizer.eos_token_id:
-                break
-            generated_ids.append(next_token)
+        # Use a single persistent client for the entire generation loop so we
+        # avoid creating a new TCP connection for every token × every worker.
+        with httpx.Client(timeout=DEFAULT_INFER_TIMEOUT_S) as client:
+            for _ in range(max_tokens):
+                next_token = self._forward_one_token(stages, input_ids + generated_ids, client)
+                if next_token == tokenizer.eos_token_id:
+                    break
+                generated_ids.append(next_token)
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         text = tokenizer.decode(generated_ids, skip_special_tokens=True)
@@ -110,6 +113,7 @@ class Pipeline:
         self,
         stages: list[WorkerStatus],
         token_ids: list[int],
+        client: httpx.Client,
     ) -> int:
         """Run a single forward pass through the pipeline and return the next token id."""
         torch = _torch()
@@ -117,32 +121,31 @@ class Pipeline:
         # First worker: token_ids → hidden states
         first = stages[0]
         req = ForwardRequest(token_ids=token_ids, is_last=len(stages) == 1)
-        resp = self._post_forward(first, req)
+        resp = self._post_forward(first, req, client)
 
         if len(stages) == 1:
             logits = deserialize_tensor(resp.logits_b64)
             return int(torch.argmax(logits[0, -1, :]).item())
 
-        # Intermediate workers
+        # Intermediate + last workers
         for i, stage in enumerate(stages[1:], start=1):
             is_last = i == len(stages) - 1
             req = ForwardRequest(
                 activations_b64=resp.activations_b64,
                 is_last=is_last,
             )
-            resp = self._post_forward(stage, req)
+            resp = self._post_forward(stage, req, client)
 
         logits = deserialize_tensor(resp.logits_b64)
         return int(torch.argmax(logits[0, -1, :]).item())
 
     def _post_forward(
-        self, worker: WorkerStatus, req: ForwardRequest,
+        self, worker: WorkerStatus, req: ForwardRequest, client: httpx.Client,
     ) -> ForwardResponse:
         url = worker.inference_url + ROUTES["forward"]
-        with httpx.Client(timeout=120.0) as client:
-            r = client.post(url, json=req.model_dump())
-            r.raise_for_status()
-            return ForwardResponse(**r.json())
+        r = client.post(url, json=req.model_dump())
+        r.raise_for_status()
+        return ForwardResponse(**r.json())
 
 
 def _torch():
