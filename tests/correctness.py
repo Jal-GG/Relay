@@ -61,6 +61,7 @@ def run_correctness_check(
     runner_a.config = model.config
     runner_a.embed_tokens = model.model.embed_tokens
     runner_a.layers = model.model.layers[0:split_at]
+    runner_a.rotary_emb = getattr(model.model, "rotary_emb", None)
     runner_a.norm = None
     runner_a.lm_head = None
 
@@ -74,6 +75,7 @@ def run_correctness_check(
     runner_b.config = model.config
     runner_b.embed_tokens = None
     runner_b.layers = model.model.layers[split_at:num_layers]
+    runner_b.rotary_emb = getattr(model.model, "rotary_emb", None)
     runner_b.norm = model.model.norm
     runner_b.lm_head = model.lm_head
 

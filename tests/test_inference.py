@@ -86,7 +86,6 @@ def test_inference_runner_split_forward():
         num_attention_heads=4,
         num_key_value_heads=4,
         max_position_embeddings=128,
-        torch_dtype=torch.float32,
     )
     model = AutoModelForCausalLM.from_config(config).eval()
 
@@ -101,6 +100,7 @@ def test_inference_runner_split_forward():
     runner_a.config = config
     runner_a.embed_tokens = model.model.embed_tokens
     runner_a.layers = model.model.layers[0:2]
+    runner_a.rotary_emb = model.model.rotary_emb
     runner_a.norm = None
     runner_a.lm_head = None
 
@@ -114,6 +114,7 @@ def test_inference_runner_split_forward():
     runner_b.config = config
     runner_b.embed_tokens = None
     runner_b.layers = model.model.layers[2:4]
+    runner_b.rotary_emb = model.model.rotary_emb
     runner_b.norm = model.model.norm
     runner_b.lm_head = model.lm_head
 
@@ -146,7 +147,6 @@ def test_inference_runner_split_matches_full_argmax():
         num_attention_heads=4,
         num_key_value_heads=4,
         max_position_embeddings=128,
-        torch_dtype=torch.float32,
     )
     model = AutoModelForCausalLM.from_config(config).eval()
 
@@ -160,6 +160,7 @@ def test_inference_runner_split_matches_full_argmax():
     runner_a.config = config
     runner_a.embed_tokens = model.model.embed_tokens
     runner_a.layers = model.model.layers[0:2]
+    runner_a.rotary_emb = model.model.rotary_emb
     runner_a.norm = None
     runner_a.lm_head = None
 
@@ -173,6 +174,7 @@ def test_inference_runner_split_matches_full_argmax():
     runner_b.config = config
     runner_b.embed_tokens = None
     runner_b.layers = model.model.layers[2:4]
+    runner_b.rotary_emb = model.model.rotary_emb
     runner_b.norm = model.model.norm
     runner_b.lm_head = model.lm_head
 
@@ -204,7 +206,6 @@ def test_inference_runner_single_worker_matches_full():
         num_attention_heads=4,
         num_key_value_heads=4,
         max_position_embeddings=128,
-        torch_dtype=torch.float32,
     )
     model = AutoModelForCausalLM.from_config(config).eval()
 
@@ -219,6 +220,7 @@ def test_inference_runner_single_worker_matches_full():
     runner.config = config
     runner.embed_tokens = model.model.embed_tokens
     runner.layers = model.model.layers[0:4]
+    runner.rotary_emb = model.model.rotary_emb
     runner.norm = model.model.norm
     runner.lm_head = model.lm_head
 
