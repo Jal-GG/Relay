@@ -24,6 +24,8 @@ ROUTES = {
     "generate": "/generate",
     "pipeline": "/pipeline",
     "forward": "/forward",
+    "configure": "/configure",
+    "network_probe": "/network/probe",
 }
 
 DEFAULT_PORT = 8000

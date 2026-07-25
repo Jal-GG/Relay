@@ -56,6 +56,10 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="Relay Coordinator", version="0.4.0", lifespan=lifespan)
 
+    @app.post(ROUTES["network_probe"])
+    def network_probe(payload: dict) -> dict:
+        return {"bytes": len(payload.get("payload", ""))}
+
     @app.post(ROUTES["register"])
     def register(req: RegisterRequest) -> dict:
         status = state.register(req)
@@ -109,6 +113,8 @@ def create_app() -> FastAPI:
             result = await loop.run_in_executor(None, pipeline.generate, req)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
         return JSONResponse(result.model_dump())
 
     @app.get(ROUTES["pipeline"])
