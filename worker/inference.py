@@ -335,6 +335,11 @@ class InferenceRunner:
     def forward_from_tokens(self, token_ids: list[int]) -> Any:
         """First-worker entry point: embed tokens then run assigned layers."""
         torch = self.torch
+        backend = getattr(self, "backend", None)
+        if backend is None:
+            from worker.backends import CpuBackend
+            backend = CpuBackend()
+            self.backend = backend
         with torch.no_grad():
             input_ids = torch.tensor([token_ids], dtype=torch.long)
             input_ids = self.backend.move_tensor(input_ids)
@@ -349,6 +354,11 @@ class InferenceRunner:
     def forward_from_tokens_to_logits(self, token_ids: list[int]) -> Any:
         """Single-worker pipeline: embed → layers → norm → lm_head → logits."""
         torch = self.torch
+        backend = getattr(self, "backend", None)
+        if backend is None:
+            from worker.backends import CpuBackend
+            backend = CpuBackend()
+            self.backend = backend
         with torch.no_grad():
             input_ids = torch.tensor([token_ids], dtype=torch.long)
             input_ids = self.backend.move_tensor(input_ids)
@@ -365,6 +375,11 @@ class InferenceRunner:
     def forward_from_activations(self, hidden_states: Any, is_last: bool) -> Any:
         """Subsequent-worker entry point: run layers on received activations."""
         torch = self.torch
+        backend = getattr(self, "backend", None)
+        if backend is None:
+            from worker.backends import CpuBackend
+            backend = CpuBackend()
+            self.backend = backend
         with torch.no_grad():
             hidden_states = self.backend.move_tensor(hidden_states)
             seq_len = hidden_states.shape[1]

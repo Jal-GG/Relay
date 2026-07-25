@@ -5,6 +5,7 @@ import logging
 import signal
 import sys
 import threading
+import time
 from urllib.parse import urljoin
 
 import httpx
@@ -51,6 +52,19 @@ def make_heartbeat(worker_id: str) -> HeartbeatRequest:
 
 def url(base: str, route: str) -> str:
     return urljoin(base if base.endswith("/") else base + "/", route.lstrip("/"))
+
+
+def measure_network(coordinator_url: str, client: httpx.Client) -> tuple[float, float]:
+    payload = "x" * (256 * 1024)
+    started = time.perf_counter()
+    response = client.post(
+        url(coordinator_url, ROUTES["network_probe"]),
+        json={"payload": payload},
+    )
+    response.raise_for_status()
+    elapsed = time.perf_counter() - started
+    bandwidth = (len(payload) * 8 / elapsed) / 1_000_000 if elapsed else 0.0
+    return elapsed * 1000, bandwidth
 
 
 def task_loop(
@@ -164,13 +178,22 @@ def run(
     layer_end: int | None = None
     actual_device: str | None = None
 
-    if model_name and layer_spec:
-        layer_start, layer_end = _parse_layer_spec(layer_spec)
-        runner, _ = _start_inference_server(
-            model_name, layer_start, layer_end, inference_port, split_path,
-            is_last=is_last, device=device,
-        )
-        actual_device = runner.backend.device
+    if model_name:
+        layer_start, layer_end = _parse_layer_spec(layer_spec) if layer_spec else (0, 0)
+        if layer_spec:
+            runner, _ = _start_inference_server(
+                model_name, layer_start, layer_end, inference_port, split_path,
+                is_last=is_last, device=device,
+            )
+            actual_device = runner.backend.device
+        else:
+            from worker.server import create_inference_app
+            import uvicorn
+
+            app = create_inference_app()
+            config = uvicorn.Config(app, host="0.0.0.0", port=inference_port, log_level="warning")
+            server = uvicorn.Server(config)
+            threading.Thread(target=server.run, daemon=True, name="inference-server").start()
 
     reg = build_register_request(
         worker_id,
@@ -183,6 +206,12 @@ def run(
     log.info("registering %s (%s) with %s", reg.worker_id, reg.ip, coordinator_url)
 
     with httpx.Client(timeout=10.0) as client:
+        try:
+            latency, bandwidth = measure_network(coordinator_url, client)
+            reg.hardware.network_latency_ms = latency
+            reg.hardware.network_bandwidth_mbps = bandwidth
+        except httpx.HTTPError as exc:
+            log.warning("network measurement failed: %s", exc)
         try:
             resp = client.post(url(coordinator_url, ROUTES["register"]), json=reg.model_dump())
             resp.raise_for_status()
