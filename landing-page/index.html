@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relay | Distributed LLM Inference</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="container">
+            <a href="#" class="navbar-brand">
+                <span>[</span>Relay<span>]</span>
+            </a>
+            <ul class="navbar-nav">
+                <li><a href="#features" class="nav-link">Features</a></li>
+                <li><a href="#install" class="nav-link">Install</a></li>
+                <li><a href="https://github.com/Jal-GG/Relay" class="nav-link" target="_blank">GitHub</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-bg-grid"></div>
+        <div class="container">
+            <div class="hero-content">
+                <h1>Distributed<br><span class="neon">LLM Inference</span></h1>
+                <p class="subtitle">Run Large Language Models collaboratively across heterogeneous consumer hardware. Don't rent a $30,000 GPU—pool your existing hardware together.</p>
+                
+                <div class="terminal">
+                    <div class="terminal-header">
+                        <div class="terminal-dots">
+                            <div class="terminal-dot"></div>
+                            <div class="terminal-dot"></div>
+                            <div class="terminal-dot"></div>
+                        </div>
+                        <span class="terminal-title">quickstart.sh</span>
+                        <button class="copy-btn" onclick="copyCode(this)" data-code="pip install -r requirements.txt && python -m coordinator.main">COPY</button>
+                    </div>
+                    <div class="terminal-body">
+                        <div class="terminal-line">
+                            <span class="terminal-prompt">~ $</span>
+                            <span class="terminal-command">git clone https://github.com/Jal-GG/Relay.git</span>
+                        </div>
+                        <div class="terminal-line">
+                            <span class="terminal-prompt">~ $</span>
+                            <span class="terminal-command">cd relay && pip install -r requirements.txt</span>
+                        </div>
+                        <div class="terminal-output">Installing dependencies...</div>
+                        <div class="terminal-line">
+                            <span class="terminal-prompt">~ $</span>
+                            <span class="terminal-command">python -m coordinator.main</span>
+                        </div>
+                        <div class="terminal-output">Cluster dashboard running at http://localhost:8000/</div>
+                    </div>
+                </div>
+                
+                <!-- Removed Get Started & Learn More Buttons as requested -->
+            </div>
+
+            <!-- Topology Visualization -->
+            <div class="topology-visual" id="topology">
+                <svg class="connections-svg" id="connections-svg"></svg>
+                
+                <!-- Master / Coordinator -->
+                <div class="node node-master" id="node-master">
+                    <div class="node-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+                    </div>
+                    <div class="node-title">Master</div>
+                    <div class="node-desc">Coordinator</div>
+                </div>
+                
+                <!-- Cloud GPU -->
+                <div class="node node-cloud" id="node-cloud">
+                    <div class="node-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
+                    </div>
+                    <div class="node-title">Cloud GPU</div>
+                    <div class="node-desc">A10G · L0-6</div>
+                </div>
+                
+                <!-- Local PC CPU -->
+                <div class="node node-local-cpu" id="node-local-cpu">
+                    <div class="node-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></svg>
+                    </div>
+                    <div class="node-title">Local CPU</div>
+                    <div class="node-desc">i7 · L6-12</div>
+                </div>
+                
+                <!-- Local PC GPU -->
+                <div class="node node-local-gpu" id="node-local-gpu">
+                    <div class="node-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 2H5v2H3v2H1v2h2v2H1v2h2v2H1v2h2v2h2v2h2v-2h2v2h2v-2h2v2h2v-2h2v2h2v-2h2v-2h2v-2h2v-2h2V8h2V6h-2V4h-2V2h-2v2h-2V2h-2v2h-2V2h-2v2H9V2H7zm12 16H5V6h14v12zm-2-10H9v8h8V8z"/></svg>
+                    </div>
+                    <div class="node-title">Local GPU</div>
+                    <div class="node-desc">RTX 4070 · L12-16</div>
+                </div>
+                
+                <!-- Mobile Edge -->
+                <div class="node node-mobile" id="node-mobile">
+                    <div class="node-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg>
+                    </div>
+                    <div class="node-title">Mobile</div>
+                    <div class="node-desc">Snapdragon · L16-19</div>
+                </div>
+                
+                <!-- Mini PC -->
+                <div class="node node-mini" id="node-mini">
+                    <div class="node-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 13H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1v-6c0-.55-.45-1-1-1zM7 19c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM20 3H4c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h16c.55 0 1-.45 1-1V4c0-.55-.45-1-1-1zM7 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
+                    </div>
+                    <div class="node-title">Mini PC</div>
+                    <div class="node-desc">N100 · L19-22</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="section" id="features">
+        <div class="container">
+            <h2>Core <span class="highlight">Architecture</span></h2>
+            <p>Relay is a proof-of-concept distributed systems platform designed to run LLMs via Pipeline Parallelism.</p>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="40" height="40"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg>
+                    </div>
+                    <h3 class="feature-title">Heterogeneous Hardware</h3>
+                    <p class="feature-desc">Mix and match CPUs and GPUs seamlessly. The system detects CUDA availability and routes layers appropriately across consumer devices.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="40" height="40"><path d="M11 21h-1l1-7H7.5c-.58 0-.57-.32-.38-.66.19-.34.05-.08.07-.12C8.42 10.6 11.42 5.46 14.5 0h.5l-1 7h4.5c.53 0 .56.28.37.6l-.05.09C15.22 13.9 12.22 19 11 21z"/></svg>
+                    </div>
+                    <h3 class="feature-title">Dynamic Layer Splitting</h3>
+                    <p class="feature-desc">Model state dicts are split by layer ranges across machines, ensuring no single node runs out of memory (VRAM/RAM) during inference.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="40" height="40"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                    </div>
+                    <h3 class="feature-title">Fault-Tolerant Heartbeats</h3>
+                    <p class="feature-desc">Workers report live metrics every 5 seconds. If a worker goes offline, tasks fail gracefully and are marked for reallocation automatically.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="40" height="40"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96zM4.26 14C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2H4.26zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.9-4.33-3.56zm2.95-8H5.08c1.03-1.78 2.68-3.1 4.67-3.71C9.17 5.56 8.71 6.78 8.39 8zM12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96zM14.34 14H9.66c-.09-.66-.16-1.32-.16-2 0-.68.07-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2zm.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95c-.96 1.65-2.49 2.93-4.33 3.56zM16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2h-3.38z"/></svg>
+                    </div>
+                    <h3 class="feature-title">Backend Agnostic</h3>
+                    <p class="feature-desc">The coordinator orchestrates tensor serialization (activations) without needing to know if the underlying execution environment is PyTorch CUDA or CPU.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section class="install-section section" id="install">
+        <div class="container">
+            <h2>Quick <span class="highlight">Start</span></h2>
+            
+            <div class="install-grid">
+                <div>
+                    <div class="step-card">
+                        <span class="step-num">01</span>
+                        <h3 class="step-title">Start the Coordinator</h3>
+                        <p>The Coordinator tracks cluster state and serves the API and Dashboard.</p>
+                        <div class="terminal" style="margin-bottom: 0;">
+                            <button class="copy-btn" onclick="copyCode(this)" data-code="python -m coordinator.main" style="top: 0.5rem; right: 0.5rem; z-index: 5;">COPY</button>
+                            <div class="terminal-body" style="padding: 1rem;">
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">$</span>
+                                    <span class="terminal-command">python -m coordinator.main</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="step-card">
+                        <span class="step-num">02</span>
+                        <h3 class="step-title">Run Inference!</h3>
+                        <p>Submit a prompt. The coordinator routes it through the pipeline.</p>
+                        <div class="terminal" style="margin-bottom: 0;">
+                            <button class="copy-btn" onclick="copyCode(this)" data-code="curl -X POST http://localhost:8000/generate -H 'Content-Type: application/json' -d '{&#34;prompt&#34;:&#34;The capital of France is&#34;}'" style="top: 0.5rem; right: 0.5rem; z-index: 5;">COPY</button>
+                            <div class="terminal-body" style="padding: 1rem;">
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">$</span>
+                                    <span class="terminal-command">curl -X POST http://localhost:8000/generate \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">></span>
+                                    <span class="terminal-command">  -H "Content-Type: application/json" \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">></span>
+                                    <span class="terminal-command">  -d '{"prompt":"The capital of France is"}'</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                    <div class="step-card">
+                        <span class="step-num">03</span>
+                        <h3 class="step-title">Attach Worker Nodes</h3>
+                        <p>Start your workers on the network and register them with the Coordinator.</p>
+                        
+                        <div class="terminal" style="margin-bottom: 1rem;">
+                            <div class="terminal-header">
+                                <span class="terminal-title">Worker A (CPU Node)</span>
+                                <button class="copy-btn" onclick="copyCode(this)" data-code="python -m worker.main http://localhost:8000 --worker-id cpu-node-1 --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 --layers 6:12 --inference-port 9001">COPY</button>
+                            </div>
+                            <div class="terminal-body" style="padding: 1rem;">
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">$</span>
+                                    <span class="terminal-command">python -m worker.main http://localhost:8000 \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt"> </span>
+                                    <span class="terminal-command">  --worker-id cpu-node-1 \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt"> </span>
+                                    <span class="terminal-command">  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt"> </span>
+                                    <span class="terminal-command">  --layers 6:12 --inference-port 9001</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="terminal" style="margin-bottom: 0;">
+                            <div class="terminal-header">
+                                <span class="terminal-title">Worker B (GPU Node)</span>
+                                <button class="copy-btn" onclick="copyCode(this)" data-code="python -m worker.main http://localhost:8000 --worker-id gpu-node-1 --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 --layers 12:22 --inference-port 9002">COPY</button>
+                            </div>
+                            <div class="terminal-body" style="padding: 1rem;">
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt">$</span>
+                                    <span class="terminal-command">python -m worker.main http://localhost:8000 \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt"> </span>
+                                    <span class="terminal-command">  --worker-id gpu-node-1 \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt"> </span>
+                                    <span class="terminal-command">  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \</span>
+                                </div>
+                                <div class="terminal-line">
+                                    <span class="terminal-prompt"> </span>
+                                    <span class="terminal-command">  --layers 12:22 --inference-port 9002</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <p class="footer-text">Relay Distributed Inference Engine</p>
+            <div style="margin-top: 1rem;">
+                <a href="#" class="footer-link">Home</a>
+                <a href="https://github.com/Jal-GG/Relay" class="footer-link" target="_blank">GitHub</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
