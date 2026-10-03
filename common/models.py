@@ -24,6 +24,8 @@ class HardwareInfo(BaseModel):
     ram_free_mb: int
     cpu_percent: float = 0.0
     gpu: Optional[GpuInfo] = None  # Optional kept: pynvml may be absent
+    network_latency_ms: float = 0.0
+    network_bandwidth_mbps: float = 0.0
 
 
 class RegisterRequest(BaseModel):
@@ -36,6 +38,8 @@ class RegisterRequest(BaseModel):
     layer_start: Optional[int] = None
     layer_end: Optional[int] = None
     model_name: Optional[str] = None
+    # Phase 4 — heterogeneous execution
+    device: Optional[str] = None  # "cpu", "cuda", or None if not an inference worker
 
 
 class HeartbeatRequest(BaseModel):
@@ -55,6 +59,8 @@ class WorkerStatus(BaseModel):
     layer_start: Optional[int] = None
     layer_end: Optional[int] = None
     model_name: Optional[str] = None
+    # Phase 4 — heterogeneous execution
+    device: Optional[str] = None
 
     def is_stale(self, heartbeat_timeout_s: float) -> bool:
         age = (utcnow() - self.last_seen).total_seconds()
@@ -62,17 +68,17 @@ class WorkerStatus(BaseModel):
 
     @property
     def has_inference(self) -> bool:
-        """True if this worker registered with layer-range inference capabilities."""
-        return (
-            self.inference_port is not None
-            and self.layer_start is not None
-            and self.layer_end is not None
-        )
+        """True if this worker registered with inference capabilities."""
+        return self.inference_port is not None and self.model_name is not None
 
     @property
     def inference_url(self) -> str:
         """Base URL for the worker's inference HTTP server."""
         return f"http://{self.ip}:{self.inference_port}"
+
+    @property
+    def network_bandwidth_mbps(self) -> float:
+        return self.hardware.network_bandwidth_mbps
 
 
 # ── Phase 2 — Remote task execution ──────────────────────────────────
@@ -127,6 +133,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     max_new_tokens: int = 50
     temperature: float = 0.0  # 0 = greedy/deterministic
+    model_name: Optional[str] = None
 
 
 class GenerateResponse(BaseModel):
@@ -149,6 +156,15 @@ class ForwardResponse(BaseModel):
     logits_b64: Optional[str] = None  # final output (last worker only)
 
 
+class ConfigureRequest(BaseModel):
+    model_name: str
+    layer_start: int
+    layer_end: int
+    is_last: bool = False
+    split_path: Optional[str] = None
+    device: str = "auto"
+
+
 class PipelineStage(BaseModel):
     """Read-only view of one stage in the inference pipeline."""
     worker_id: str
@@ -158,3 +174,15 @@ class PipelineStage(BaseModel):
     layer_end: int
     model_name: str
     status: str
+    device: Optional[str] = None  # Phase 4 — "cpu" or "cuda"
+
+
+class LayerRange(BaseModel):
+    start: int
+    end: int
+
+
+class ModelMetadata(BaseModel):
+    model_name: str
+    num_layers: int
+    size_mb: int

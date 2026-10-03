@@ -285,9 +285,14 @@
       let html = '<div class="pipeline-bar">';
       stages.forEach((s, i) => {
         if (i > 0) html += '<span class="pipeline-arrow">→</span>';
+        const deviceLabel = s.device === "cuda"
+          ? '<span class="status online" style="font-size:10px">GPU</span>'
+          : s.device === "cpu"
+            ? '<span class="status" style="font-size:10px;color:var(--accent);background:rgba(88,166,255,0.12)">CPU</span>'
+            : '';
         html += `
           <div class="pipeline-stage">
-            <div class="label">${escapeHtml(s.worker_id)}</div>
+            <div class="label">${escapeHtml(s.worker_id)} ${deviceLabel}</div>
             <div class="layers">layers ${s.layer_start}-${s.layer_end - 1}</div>
             <div class="muted">${escapeHtml(s.model_name)}</div>
           </div>

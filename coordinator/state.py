@@ -35,6 +35,7 @@ class ClusterState:
                 layer_start=req.layer_start,
                 layer_end=req.layer_end,
                 model_name=req.model_name,
+                device=req.device,
             )
             self._workers[req.worker_id] = status
             return status
@@ -44,6 +45,10 @@ class ClusterState:
             existing = self._workers.get(req.worker_id)
             if existing is None:
                 raise KeyError(f"unknown worker_id {req.worker_id!r}; must register first")
+            if req.hardware.network_latency_ms == 0.0:
+                req.hardware.network_latency_ms = existing.hardware.network_latency_ms
+            if req.hardware.network_bandwidth_mbps == 0.0:
+                req.hardware.network_bandwidth_mbps = existing.hardware.network_bandwidth_mbps
             existing.hardware = req.hardware
             existing.last_seen = utcnow()
             existing.status = "online"
@@ -77,9 +82,19 @@ class ClusterState:
                 self._mark_stale_if_needed(status)
             return status
 
-    def remove_worker(self, worker_id: str) -> None:
+    def mark_offline(self, worker_id: str) -> None:
         with self._lock:
-            self._workers.pop(worker_id, None)
+            worker = self._workers.get(worker_id)
+            if worker is not None:
+                worker.status = "offline"
+
+    def set_layer_assignment(self, worker_id: str, layer_start: int, layer_end: int, model_name: str) -> None:
+        with self._lock:
+            worker = self._workers[worker_id]
+            worker.layer_start = layer_start
+            worker.layer_end = layer_end
+            worker.model_name = model_name
+
 
 
 class TaskState:

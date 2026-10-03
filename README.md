@@ -1,197 +1,97 @@
-# Relay
+<div align="center">
+  <h1>🔗 Relay</h1>
+  <p><b>Distributed LLM Inference Engine</b></p>
+  <p>Run Large Language Models collaboratively across heterogeneous consumer hardware (CPU + GPU). Don't rent a $30,000 GPU—pool your existing hardware together.</p>
+</div>
 
-Distributed inference MVP — heterogeneous consumer hardware collaboratively running a model too large for any single machine.
+---
 
-## Status — Distributed model loading
+## 📖 Overview
 
-Coordinator accepts worker registration and heartbeats, dispatches tasks to workers, and tracks results. Workers poll for tasks, execute them, and report results back. Three task types: `matrix_multiply`, `hash_file`, `sleep`. Round-robin scheduling via pull-based polling. Error handling: worker crash → task marked `failed`; task deadline exceeded → task marked `timed_out`. No auth, no TLS, no persistent storage, no retry logic.
+Relay is a proof-of-concept distributed systems platform designed to run Large Language Models (LLMs) that are too large to fit into the memory (VRAM/RAM) of any single machine. By utilizing **Pipeline Parallelism**, Relay splits the layers of a model across multiple network-connected nodes. 
 
-**Phase 3:** A model is split across two or more workers by layer range. The coordinator tokenizes a prompt, sends token IDs to the first worker, forwards hidden-state activations between workers, and samples greedily from the final worker's logits. Correctness is verified by comparing split-pipeline output to single-model output token-for-token.
+Instead of requiring expensive, uniform enterprise hardware, Relay dynamically schedules workloads across **heterogeneous nodes** (e.g., a gaming PC with a GPU and a standard laptop with a CPU) in the same pipeline.
 
-### Layout
 
-```
-coordinator/   FastAPI app + in-memory cluster state + task state + dashboard + pipeline
-worker/        Hardware detection + registration/heartbeat loop + task runner + inference
-common/        Shared Pydantic models + protocol constants + tensor serialization
-tools/         Offline model splitter (Phase 3)
-tests/         pytest tests (runner, task state, API, inference, correctness)
-```
+## ✨ Key Features
 
-### Setup
+- **Heterogeneous Hardware:** Mix and match CPUs and GPUs seamlessly. The system detects CUDA availability and routes layers appropriately.
+- **Dynamic Layer Splitting:** Model state dicts are split by layer ranges across machines, ensuring no single node runs out of memory.
+- **Fault-Tolerant Heartbeats:** Workers report live CPU/RAM/VRAM metrics every 5 seconds. If a worker goes offline, tasks fail gracefully and are marked for reallocation.
+- **Backend Agnostic:** The coordinator orchestrates tensor serialization (activations) without needing to know if the underlying execution environment is PyTorch CUDA or CPU.
 
+---
+
+## 🚀 Quick Start Guide
+
+### 1. Install Dependencies
 ```bash
+git clone https://github.com/your-username/relay.git
+cd relay
 pip install -r requirements.txt
 ```
+*(Requires `torch`, `transformers`, `fastapi`, and `uvicorn`)*
 
-### Run — cluster basics + task execution
-
-1. Start the coordinator (on the machine that other workers can reach):
-
-```bash
-python -m coordinator.main
-# or: uvicorn coordinator.main:app --host 0.0.0.0 --port 8000
-```
-
-2. Open the dashboard: <http://localhost:8000/>
-
-3. On each worker machine, start a worker pointing at the coordinator:
-
-```bash
-python -m worker.main http://<coordinator-ip>:8000
-# override worker id:
-python -m worker.main http://<coordinator-ip>:8000 --worker-id gaming-pc
-# debug logging:
-python -m worker.main http://<coordinator-ip>:8000 -v
-```
-
-4. Submit tasks (from any machine with curl):
-
-```bash
-# matrix multiply (100x100)
-curl -X POST http://localhost:8000/tasks -H "Content-Type: application/json" \
-  -d '{"type":"matrix_multiply","params":{"n":100}}'
-
-# hash a byte payload (base64-encoded)
-curl -X POST http://localhost:8000/tasks -H "Content-Type: application/json" \
-  -d '{"type":"hash_file","params":{"payload":"aGVsbG8="}}'
-
-# sleep for 2 seconds
-curl -X POST http://localhost:8000/tasks -H "Content-Type: application/json" \
-  -d '{"type":"sleep","params":{"seconds":2}}'
-
-# with a custom 10s deadline
-curl -X POST http://localhost:8000/tasks -H "Content-Type: application/json" \
-  -d '{"type":"sleep","params":{"seconds":5},"deadline_s":10}'
-```
-
-### Run — distributed inference (Phase 3)
-
-1. Start the coordinator:
-
+### 2. Start the Coordinator
+The Coordinator tracks cluster state and serves the API and Dashboard.
 ```bash
 python -m coordinator.main
 ```
+👉 Open the live cluster dashboard at: **[http://localhost:8000/](http://localhost:8000/)**
 
-2. On **Machine A** (layers 0–10):
+### 3. Attach Worker Nodes
+Open new terminals (or run these on separate machines on the same network). Provide the Coordinator's IP address.
 
+**Start Worker A (GPU) - Assigned to load the first half of the model:**
 ```bash
-python -m worker.main http://<coordinator-ip>:8000 \
-  --worker-id worker-a \
+python -m worker.main http://localhost:8000 \
+  --worker-id gpu-node-1 \
   --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
   --layers 0:11 \
   --inference-port 9001
 ```
 
-3. On **Machine B** (layers 11–21):
-
+**Start Worker B (CPU) - Assigned to load the second half of the model:**
 ```bash
-python -m worker.main http://<coordinator-ip>:8000 \
-  --worker-id worker-b \
+python -m worker.main http://localhost:8000 \
+  --worker-id cpu-node-1 \
   --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
   --layers 11:22 \
-  --inference-port 9001
+  --inference-port 9002
 ```
 
-4. Generate text via the coordinator:
+### 4. Run Distributed Inference!
+Submit a prompt to the coordinator. It will route the request through the pipeline (Worker A -> Worker B) and return the response.
 
 ```bash
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
-  -d '{"prompt":"The capital of France is","max_new_tokens":50}'
+  -d '{"prompt":"The capital of France is","max_new_tokens":20}'
 ```
 
-5. Or use the dashboard at <http://localhost:8000/> — the Pipeline section shows layer assignments, and the Inference section has a prompt box.
+---
 
-### Model splitter (optional)
+## 🛠️ Testing & Benchmarks
 
-Split a model into per-worker shard files so each worker loads only its layers:
-
-```bash
-python -m tools.split_model \
-  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
-  --splits 0:11,11:22 \
-  --output ./model_splits
-```
-
-Workers can then load from a split file:
-
-```bash
-python -m worker.main http://<coordinator-ip>:8000 \
-  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
-  --layers 0:11 \
-  --split-path ./model_splits/split_0.pt
-```
-
-### Correctness check
-
-Verify that the split pipeline produces the same tokens as the full model:
-
+Verify that the distributed split-pipeline produces the exact same tokens as running the full model on a single machine:
 ```bash
 python -m tests.correctness --model TinyLlama/TinyLlama-1.1B-Chat-v1.0
 ```
 
-### Behavior
-
-- Worker registers on startup, then POSTs a heartbeat every 5 seconds with refreshed CPU/RAM/GPU stats.
-- Coordinator marks a worker `offline` after 15 seconds with no heartbeat (3 missed beats).
-- Worker polls `/tasks/poll` every 1 second for new tasks. When a pending task is found, the coordinator assigns it (status → `running`) and the worker executes it.
-- Worker reports the result back via `/tasks/result` (status → `completed` or `failed`).
-- If the assigned worker goes offline mid-task, the coordinator's task sweeper marks the task `failed`.
-- If a running task exceeds its `deadline_s` (default 60s), the sweeper marks it `timed_out`.
-- Workers coming back online pick up new tasks but do NOT retry old failed ones.
-- Dashboard polls `/workers`, `/tasks`, and `/pipeline` every 3 seconds.
-- **Phase 3:** When inference workers register with `--model` and `--layers`, the coordinator builds a pipeline sorted by layer range. `POST /generate` tokenizes the prompt, sends token IDs to the first worker, forwards activations between workers, and samples greedily from the last worker's logits. No KV cache — each token is a full forward pass.
-
-### API
-
-| Method | Path             | Body                | Returns |
-|--------|------------------|---------------------|---------|
-| POST   | `/register`      | `RegisterRequest`   | `{"status":"registered","worker_id":...}` |
-| POST   | `/heartbeat`     | `HeartbeatRequest`  | `{"status":"ok","worker_id":...}` |
-| GET    | `/workers`       | —                   | list of worker status objects |
-| POST   | `/tasks`         | `TaskRequest`       | `{"task_id":...,"status":"pending"}` |
-| GET    | `/tasks/poll`    | `?worker_id=X`      | task object or `{"task_id":null}` |
-| POST   | `/tasks/result`  | `TaskResultRequest` | `{"task_id":...,"status":"completed"}` |
-| GET    | `/tasks`         | —                   | list of task objects |
-| POST   | `/generate`      | `GenerateRequest`   | `GenerateResponse` |
-| GET    | `/pipeline`      | —                   | list of `PipelineStage` objects |
-| GET    | `/`              | —                   | dashboard HTML |
-
-### Verifying
-
+Measure tokens/second across single-CPU, single-GPU, and Split (GPU+CPU) configurations:
 ```bash
-# Terminal 1 — coordinator
-python -m coordinator.main
-
-# Terminal 2 — worker A (layers 0-10)
-python -m worker.main http://127.0.0.1:8000 --worker-id worker-a \
-  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 --layers 0:11 --inference-port 9001
-
-# Terminal 3 — worker B (layers 11-21)
-python -m worker.main http://127.0.0.1:8000 --worker-id worker-b \
-  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 --layers 11:22 --inference-port 9002
-
-# Terminal 4 — generate
-curl -X POST http://localhost:8000/generate \
-  -H "Content-Type: application/json" \
-  -d '{"prompt":"The capital of France is","max_new_tokens":20}'
-
-# Correctness check (single machine, split pipeline)
-python -m tests.correctness
+python -m tools.benchmark \
+  --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
+  --prompt "The capital of France is" \
+  --max-tokens 20 \
+  --split-at 11
 ```
 
-### Running tests
+---
 
-```bash
-pip install -r requirements.txt
-python -m pytest tests/ -v
-```
+## 📂 Project Structure
 
-### Notes
-
-- `pynvml` is required for NVIDIA GPU stats; if it can't initialize (no NVIDIA driver / no GPU), the worker reports `gpu: null` and runs fine.
-- `numpy` is required for `matrix_multiply` tasks.
-- `torch` and `transformers` are required for Phase 3 inference. Tests that need them are automatically skipped when not installed.
-- All state lives in coordinator memory — restart the coordinator and the cluster is empty until workers re-register (which they won't, since they only register on startup. Stop and restart workers to repopulate).
-- Inference is CPU-only, stateless per-request (no KV cache), and uses greedy/temperature=0 sampling.
+- `coordinator/`: FastAPI server, in-memory cluster state, task sweeping, and the web dashboard.
+- `worker/`: Hardware capability detection, registration logic, task polling, and model inference runners (`backends/`).
+- `common/`: Shared protocols, Pydantic models, and wire-format tensor serialization.
+- `tools/`: Offline model-splitting scripts and benchmark utilities.

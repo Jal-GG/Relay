@@ -5,13 +5,16 @@ import logging
 import httpx
 
 from common.models import (
+    ConfigureRequest,
     ForwardRequest,
     ForwardResponse,
     GenerateRequest,
     GenerateResponse,
+    ModelMetadata,
     PipelineStage,
     WorkerStatus,
 )
+from coordinator.scheduler import estimate_model_metadata, plan_layers
 from common.protocol import DEFAULT_MAX_NEW_TOKENS, DEFAULT_INFER_TIMEOUT_S, ROUTES
 from common.serialization import deserialize_tensor
 from coordinator.state import ClusterState
@@ -30,15 +33,65 @@ class Pipeline:
 
     def __init__(self, cluster_state: ClusterState) -> None:
         self._cluster = cluster_state
+        self._planned_worker_ids: set[str] | None = None
 
     def get_stages(self) -> list[WorkerStatus]:
         """Return inference-capable workers sorted by layer_start."""
         workers = self._cluster.list_workers()
         stages = [
             w for w in workers
-            if w.has_inference and w.status == "online"
+            if w.has_inference and w.layer_start is not None and w.layer_end is not None and w.status == "online"
         ]
         stages.sort(key=lambda w: w.layer_start or 0)
+        return stages
+
+    def _configure_stages(self, model_name: str) -> list[WorkerStatus]:
+        workers = [
+            worker for worker in self._cluster.list_workers()
+            if worker.status == "online" and worker.inference_port is not None
+        ]
+        model = estimate_model_metadata(model_name)
+        assignments = plan_layers(workers, model)
+        client = httpx.Client(timeout=DEFAULT_INFER_TIMEOUT_S)
+        try:
+            for worker in workers:
+                assignment = assignments.get(worker.worker_id)
+                if assignment is None:
+                    continue
+                response = client.post(
+                    worker.inference_url + "/configure",
+                    json=ConfigureRequest(
+                        model_name=model_name,
+                        layer_start=assignment.start,
+                        layer_end=assignment.end,
+                        is_last=assignment.end == model.num_layers,
+                        device=worker.device or "auto",
+                    ).model_dump(),
+                )
+                response.raise_for_status()
+                self._cluster.set_layer_assignment(
+                    worker.worker_id, assignment.start, assignment.end, model_name
+                )
+        finally:
+            client.close()
+        self._planned_worker_ids = set(assignments)
+        return self.get_stages()
+
+    def _ensure_stages(self, model_name: str) -> list[WorkerStatus]:
+        stages = self.get_stages()
+        if (
+            not stages
+            or (
+                self._planned_worker_ids is not None
+                and set(stage.worker_id for stage in stages) != self._planned_worker_ids
+            )
+            or any(
+                stage.model_name != model_name
+                or stage.layer_end <= stage.layer_start
+                for stage in stages
+            )
+        ):
+            stages = self._configure_stages(model_name)
         return stages
 
     def get_pipeline_view(self) -> list[PipelineStage]:
@@ -52,6 +105,7 @@ class Pipeline:
                 layer_end=s.layer_end or 0,
                 model_name=s.model_name or "",
                 status=s.status,
+                device=s.device,
             )
             for s in stages
         ]
@@ -73,10 +127,17 @@ class Pipeline:
                     f"layer {curr_start}"
                 )
 
+    def _default_model_name(self) -> str:
+        workers = self._cluster.list_workers()
+        for worker in workers:
+            if worker.model_name:
+                return worker.model_name
+        return "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
     def generate(self, req: GenerateRequest) -> GenerateResponse:
         import time
 
-        stages = self.get_stages()
+        stages = self._ensure_stages(req.model_name or self._default_model_name())
         self._validate_pipeline(stages)  # fail fast before any heavy imports
 
         from transformers import AutoTokenizer
@@ -90,14 +151,21 @@ class Pipeline:
         max_tokens = req.max_new_tokens or DEFAULT_MAX_NEW_TOKENS
         start = time.perf_counter()
 
-        # Use a single persistent client for the entire generation loop so we
-        # avoid creating a new TCP connection for every token × every worker.
         with httpx.Client(timeout=DEFAULT_INFER_TIMEOUT_S) as client:
-            for _ in range(max_tokens):
-                next_token = self._forward_one_token(stages, input_ids + generated_ids, client)
-                if next_token == tokenizer.eos_token_id:
-                    break
-                generated_ids.append(next_token)
+            try:
+                generated_ids = self._generate_tokens(
+                    stages, input_ids, max_tokens, tokenizer.eos_token_id, client
+                )
+            except httpx.HTTPError as exc:
+                failed_worker = self._worker_for_error(stages, exc)
+                if failed_worker is None:
+                    raise
+                self._cluster.mark_offline(failed_worker.worker_id)
+                stages = self._configure_stages(model_name)
+                self._validate_pipeline(stages)
+                generated_ids = self._generate_tokens(
+                    stages, input_ids, max_tokens, tokenizer.eos_token_id, client
+                )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         text = tokenizer.decode(generated_ids, skip_special_tokens=True)
@@ -108,6 +176,24 @@ class Pipeline:
             output_tokens=len(generated_ids),
             elapsed_ms=round(elapsed_ms, 1),
         )
+
+    def _generate_tokens(
+        self, stages: list[WorkerStatus], input_ids: list[int], max_tokens: int,
+        eos_token_id: int | None, client: httpx.Client,
+    ) -> list[int]:
+        generated_ids: list[int] = []
+        for _ in range(max_tokens):
+            next_token = self._forward_one_token(stages, input_ids + generated_ids, client)
+            if next_token == eos_token_id:
+                break
+            generated_ids.append(next_token)
+        return generated_ids
+
+    def _worker_for_error(self, stages: list[WorkerStatus], exc: httpx.HTTPError) -> WorkerStatus | None:
+        request = exc.request
+        if request is None:
+            return None
+        return next((stage for stage in stages if stage.inference_url in str(request.url)), None)
 
     def _forward_one_token(
         self,

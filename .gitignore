@@ -2,6 +2,7 @@
 # Large Model files
 *.gguf
 *.bin
+model_splits/
 
 # Python Caches & Virtual Envs
 __pycache__/
